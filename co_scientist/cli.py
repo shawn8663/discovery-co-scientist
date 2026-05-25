@@ -357,6 +357,23 @@ def serve(
     uvicorn.run(create_app(cfg), host=host, port=port, log_level="info")
 
 
+@app.command("eval")
+def eval_cmd(
+    ctx: typer.Context,
+    agent: str | None = typer.Argument(None, help="generation|reflection|ranking|overview"),
+    offline: bool = typer.Option(False, "--offline", help="Structural checks only; no judge."),
+) -> None:
+    """Run the eval rubric runner over the bundled fixtures."""
+    cfg, _ = ctx.obj
+    from .evals.runner import run_agent, run_all
+
+    if agent:
+        result = asyncio.run(run_agent(cfg, agent, offline=offline))
+    else:
+        result = asyncio.run(run_all(cfg, offline=offline))
+    console.print_json(data=result)
+
+
 @tools_app.command("list")
 def tools_list(ctx: typer.Context) -> None:
     """List registered tools (builtins + any discovered science-skills)."""

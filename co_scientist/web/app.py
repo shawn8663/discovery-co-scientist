@@ -171,6 +171,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     # ----------------------------- API + SSE ----------------------------- #
 
+    @app.get("/api/sessions/{session_id}/metrics")
+    async def api_metrics(session_id: str) -> JSONResponse:
+        from ..obs.metrics import session_metrics_cached, to_dict
+
+        conn = await db_mod.connect(cfg)
+        try:
+            m = await session_metrics_cached(conn, session_id)
+            return JSONResponse(to_dict(m))
+        finally:
+            await conn.close()
+
     @app.get("/api/sessions/{session_id}")
     async def api_session(session_id: str) -> JSONResponse:
         conn = await db_mod.connect(cfg)
