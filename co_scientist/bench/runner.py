@@ -40,6 +40,13 @@ log = get_logger("bench")
 # Structured verdict tool — far more reliable than asking the model to
 # emit a `better idea: <N>` line. Every modern provider supports function
 # calling, and a forced single-tool call cuts response tokens drastically.
+#
+# Schema notes:
+#   - `winner` is a string ("1" | "2"), not an integer-with-enum. Google's
+#     Gemini API rejects `enum` on integer-typed properties (returns
+#     `property is not defined` for the listed `required` items), so we
+#     keep the enum on string. Anthropic, OpenAI, and the OpenAI-compat
+#     endpoints all accept string-enum identically.
 RECORD_VERDICT_TOOL: dict = {
     "name": "record_verdict",
     "description": "Record the winner of a head-to-head hypothesis comparison.",
@@ -47,8 +54,8 @@ RECORD_VERDICT_TOOL: dict = {
         "type": "object",
         "properties": {
             "winner": {
-                "type": "integer", "enum": [1, 2],
-                "description": "1 if hypothesis_1 is stronger, 2 if hypothesis_2 is stronger.",
+                "type": "string", "enum": ["1", "2"],
+                "description": "'1' if hypothesis_1 is stronger, '2' if hypothesis_2 is stronger.",
             },
             "rationale": {
                 "type": "string",
@@ -171,6 +178,10 @@ async def run_bench(
         n_matches = 0
         if matches_per_pair > 0:
             judge_cfg = _candidate_cfg(base_cfg, judge_provider, judge_model)
+            # Judge work routes through agent="ranking"; route 100% of the
+            # judge budget there so we don't re-trip the per-agent cap.
+            judge_cfg.budget_shares.generation = 0.0
+            judge_cfg.budget_shares.ranking = 1.0
             judge_budget = TokenBudget(
                 cfg=judge_cfg,
                 budget_tokens=base_cfg.run.budget_tokens,
@@ -335,6 +346,14 @@ def _candidate_cfg(base_cfg: Config, provider: str, model: str) -> Config:
     Anthropic-only knobs (thinking budgets, batch) get zeroed when the
     candidate isn't Anthropic, so the OpenAI translator doesn't try to
     map something that won't help.
+
+    Budget shares are flattened: each candidate already has its own
+    dedicated TokenBudget (per_candidate_budget_usd), so the per-agent
+    split inside TokenBudget would double-count. Give 100% of the
+    candidate budget to generation. The other agents don't run in the
+    bench path so their shares don't matter — except that reasoning
+    models like o1 reserve large output budgets per call, and without
+    100% generation share the very first call can fail admission.
     """
     cfg = base_cfg.model_copy(deep=True)
     cfg.llm.provider = provider
@@ -349,6 +368,14 @@ def _candidate_cfg(base_cfg: Config, provider: str, model: str) -> Config:
         # Thinking / cache features only work on Anthropic.
         for attr in cfg.thinking.__class__.model_fields:
             setattr(cfg.thinking, attr, 0)
+    # Flatten budget shares onto generation.
+    cfg.budget_shares.generation = 1.0
+    cfg.budget_shares.reflection = 0.0
+    cfg.budget_shares.ranking = 0.0
+    cfg.budget_shares.evolution = 0.0
+    cfg.budget_shares.metareview = 0.0
+    cfg.budget_shares.proximity = 0.0
+    cfg.budget_shares.reserve = 0.0
     return cfg
 
 
@@ -492,8 +519,10 @@ async def _judge_match(
                 break
 
     if verdict_input is not None:
+        # `winner` is a string ("1" | "2"); strip and coerce. Tolerate
+        # providers that still return an integer.
         try:
-            choice = int(verdict_input.get("winner", 0))
+            choice = int(str(verdict_input.get("winner", "")).strip())
         except (TypeError, ValueError):
             choice = 0
         rationale = str(verdict_input.get("rationale", ""))

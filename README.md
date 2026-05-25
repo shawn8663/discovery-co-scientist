@@ -184,31 +184,50 @@ candidate independently generates hypotheses; then every candidate-pair
 plays `--matches` head-to-head debates, judged by ONE fixed judge model
 (picked separately so no candidate scores its own work).
 
+### Quick start: `--preset paper`
+
+Reproduce the Co-Scientist paper's preference-ranking baselines
+(plus Haiku) in one command. OpenRouter retired the experimental Gemini
+2.0 models the paper used; the preset substitutes the closest current
+analogues and documents the swap in `co_scientist/bench/presets.py`.
+
 ```bash
 co-scientist bench "Identify hypotheses about microbiome-driven inflammation" \
+  --preset paper \
+  --budget-per-candidate 1.5 --judge-budget 1.0
+```
+
+Live run on this goal — 12 matches, **$0.40 total**, judged by
+`google/gemini-3-flash-preview` (the preset's suggested judge):
+
+```
+Bench bnc_01KSG7HM47116412H3NV3VKDF8 — 12 matches
+┏━━━━━━┳────────────────────────┬─────────────────────────────────┬─────┬──────────┬────────┓
+┃ rank ┃ label                  ┆ provider:model                  ┆ W-L ┆ mean Elo ┆ $spent ┃
+┡━━━━━━╇────────────────────────┼─────────────────────────────────┼─────┼──────────┼────────┩
+│  1   │ gemini-2-flash-thinking│ openrouter:google/gemini-2.0-fl…│ 6-0 │   1284   │ 0.0026 │
+│  2   │ gemini-2-pro           │ openrouter:google/gemini-2.5-pro│ 4-2 │   1229   │ 0.0342 │
+│  3   │ openai-o1              │ openrouter:openai/o1            │ 2-4 │   1165   │ 0.2326 │
+│  4   │ claude-haiku-4.5       │ openrouter:anthropic/claude-ha…│ 0-6 │   1123   │ 0.1338 │
+└──────┴────────────────────────┴─────────────────────────────────┴─────┴──────────┴────────┘
+```
+
+Note: when judge and a candidate share the same model family there is a
+documented echo-bias. The judge-side default
+(`google/gemini-3-flash-preview`) is configurable via `--judge`; consider
+running with a different judge family if you want to control for that.
+
+### Custom candidates
+
+```bash
+co-scientist bench "Identify hypotheses about X" \
   -c flash3=openrouter:google/gemini-3-flash-preview \
-  -c flash25=openrouter:google/gemini-2.5-flash \
-  -c gpt4o-mini=openrouter:openai/gpt-4o-mini \
-  --n 1 --matches 2 \
-  --judge openrouter:openai/gpt-4o \
-  --budget-per-candidate 0.50 --judge-budget 1.0
+  -c gpt5=openai:gpt-5 \
+  -c opus=anthropic:claude-opus-4-7 \
+  --judge anthropic:claude-sonnet-4-6
 ```
 
-Output (real run):
-
-```
-Bench bnc_01KSG6GM23ERB68V6BCF9XBS2B — 6 matches
-┏━━━━━━┳────────────┬─────────────────────────────────┬────────┬─────┬─────────┬────────┬────────┓
-┃ rank ┃ label      ┆ provider:model                  ┆ n_hyps ┆ W-L ┆ mean Elo┆ $spent ┆ p50 ms ┃
-┡━━━━━━╇────────────┼─────────────────────────────────┼────────┼─────┼─────────┼────────┼────────┩
-│  1   │ flash3     │ openrouter:google/gemini-3-...  │   1    │ 3-1 │  1232   │ 0.0090 │  9764  │
-│  2   │ flash25    │ openrouter:google/gemini-2.5-...│   1    │ 3-1 │  1227   │ 0.0098 │ 16742  │
-│  3   │ gpt4o-mini │ openrouter:openai/gpt-4o-mini   │   1    │ 0-4 │  1142   │ 0.0050 │ 19137  │
-└──────┴────────────┴─────────────────────────────────┴────────┴─────┴─────────┴────────┴────────┘
-Total cost: $0.0238
-```
-
-Mechanics:
+### Mechanics
 
 - **Generation runs in parallel** per candidate under a deep-copied
   Config (`cfg.llm.provider`, `cfg.models.*`, thinking budgets zeroed

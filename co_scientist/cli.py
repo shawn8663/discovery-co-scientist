@@ -408,8 +408,16 @@ def eval_cmd(
 def bench_cmd(
     ctx: typer.Context,
     goal: str = typer.Argument(..., help="Research goal."),
+    preset: str | None = typer.Option(
+        None, "--preset",
+        help=(
+            "Use a built-in candidate list. Available: 'paper' "
+            "(Co-Scientist paper baselines via OpenRouter + Haiku). "
+            "Mutually exclusive with --candidate."
+        ),
+    ),
     candidate: list[str] = typer.Option(
-        ..., "--candidate", "-c",
+        None, "--candidate", "-c",
         help=(
             "Repeat: label=provider:model. e.g. "
             "'gemini-flash=openrouter:google/gemini-3-flash-preview'"
@@ -417,9 +425,9 @@ def bench_cmd(
     ),
     n: int = typer.Option(2, "--n", help="Hypotheses per candidate."),
     matches: int = typer.Option(2, "--matches", help="Tournament matches per pair."),
-    judge: str = typer.Option(
-        "anthropic:claude-sonnet-4-6", "--judge",
-        help="Judge as provider:model. Fixed across all matches.",
+    judge: str | None = typer.Option(
+        None, "--judge",
+        help="Judge as provider:model. Defaults to the preset's suggestion, else anthropic:claude-sonnet-4-6.",
     ),
     budget_per_candidate: float = typer.Option(
         2.0, "--budget-per-candidate", help="USD cap per candidate."
@@ -430,7 +438,12 @@ def bench_cmd(
 ) -> None:
     """Compare N models on the same goal via a cross-Elo tournament.
 
-    Example:
+    Quick start (paper repro):
+      co-scientist bench "Identify hypotheses about X" \\
+        --preset paper \\
+        --judge openrouter:google/gemini-3-flash-preview
+
+    Custom candidates:
       co-scientist bench "Identify hypotheses about X" \\
         -c gemini-flash=openrouter:google/gemini-3-flash-preview \\
         -c gpt5=openai:gpt-5 \\
@@ -438,19 +451,40 @@ def bench_cmd(
         --judge anthropic:claude-sonnet-4-6
     """
     cfg, _ = ctx.obj
-    from .bench import BenchCandidate, run_bench
+    from .bench import BenchCandidate, get_preset, run_bench
 
-    candidates: list[BenchCandidate] = []
-    for entry in candidate:
-        if "=" not in entry or ":" not in entry.split("=", 1)[1]:
+    if preset and candidate:
+        console.print("[red]--preset and --candidate are mutually exclusive[/red]")
+        raise typer.Exit(2)
+
+    candidates: list[BenchCandidate]
+    if preset:
+        p = get_preset(preset)
+        candidates = list(p.candidates)
+        if judge is None:
+            judge = p.suggested_judge
+        console.print(f"[dim]Using preset '{p.name}': {p.description}[/dim]")
+        for c in candidates:
+            console.print(f"[dim]  • {c.label}: {c.provider}:{c.model}[/dim]")
+    else:
+        if not candidate:
             console.print(
-                f"[red]--candidate must look like label=provider:model, got {entry!r}[/red]"
+                "[red]Must provide either --preset or at least one --candidate[/red]"
             )
             raise typer.Exit(2)
-        label, rest = entry.split("=", 1)
-        provider, model = rest.split(":", 1)
-        candidates.append(BenchCandidate(label=label, provider=provider, model=model))
+        candidates = []
+        for entry in candidate:
+            if "=" not in entry or ":" not in entry.split("=", 1)[1]:
+                console.print(
+                    f"[red]--candidate must look like label=provider:model, got {entry!r}[/red]"
+                )
+                raise typer.Exit(2)
+            label, rest = entry.split("=", 1)
+            provider, model = rest.split(":", 1)
+            candidates.append(BenchCandidate(label=label, provider=provider, model=model))
 
+    if judge is None:
+        judge = "anthropic:claude-sonnet-4-6"
     if ":" not in judge:
         console.print(f"[red]--judge must look like provider:model, got {judge!r}[/red]")
         raise typer.Exit(2)

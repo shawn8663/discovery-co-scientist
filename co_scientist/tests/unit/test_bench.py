@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from co_scientist.bench import PRESETS, get_preset
 from co_scientist.bench.runner import (
     BenchCandidate,
     _build_summary,
@@ -33,6 +34,37 @@ def _make_hyp(hid: str, text: str = "h") -> Hypothesis:
         artifact_path=f"artifacts/ses/hypotheses/{hid}.json",
         state="draft",
     )
+
+
+# ----------------------------- presets ----------------------------- #
+
+
+def test_paper_preset_has_documented_candidates() -> None:
+    p = get_preset("paper")
+    labels = [c.label for c in p.candidates]
+    # The 3 paper baselines + the user-added Haiku.
+    assert labels == [
+        "gemini-2-flash-thinking",
+        "gemini-2-pro",
+        "openai-o1",
+        "claude-haiku-4.5",
+    ]
+    # Suggested judge is the user-specified gemini-3-flash-preview.
+    assert "gemini-3-flash-preview" in p.suggested_judge
+    # All routed through OpenRouter so a single API key suffices.
+    for c in p.candidates:
+        assert c.provider == "openrouter"
+
+
+def test_get_preset_raises_on_unknown_name() -> None:
+    import pytest as _pytest
+
+    with _pytest.raises(KeyError):
+        get_preset("totally-made-up")
+
+
+def test_presets_dict_listed() -> None:
+    assert "paper" in PRESETS
 
 
 # ----------------------------- _candidate_cfg ----------------------------- #
@@ -72,6 +104,23 @@ def test_candidate_cfg_is_deep_copy() -> None:
     cfg = _candidate_cfg(base, "openai", "gpt-5")
     cfg.run.budget_usd = 999.0
     assert base.run.budget_usd == 25.0
+
+
+def test_candidate_cfg_flattens_budget_shares_onto_generation() -> None:
+    """Without this, expensive models like o1 fail admission on their very
+    first call because the per-agent generation share (~20%) + half-reserve
+    isn't enough headroom for one max-output reservation."""
+    base = Config()
+    cfg = _candidate_cfg(base, "openrouter", "openai/o1")
+    assert cfg.budget_shares.generation == 1.0
+    assert cfg.budget_shares.ranking == 0.0
+    assert cfg.budget_shares.reflection == 0.0
+    assert cfg.budget_shares.evolution == 0.0
+    assert cfg.budget_shares.metareview == 0.0
+    assert cfg.budget_shares.proximity == 0.0
+    assert cfg.budget_shares.reserve == 0.0
+    # Base must remain untouched.
+    assert base.budget_shares.generation == 0.20
 
 
 # ----------------------------- summary aggregation ----------------------------- #
