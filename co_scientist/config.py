@@ -327,3 +327,42 @@ def load_config(extra_path: Path | None = None) -> Config:
 
 def has_anthropic_key(cfg: Config) -> bool:
     return bool(cfg.secrets.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY"))
+
+
+# Env var names per provider preset (see llm/provider.py KNOWN_PROVIDERS).
+_PROVIDER_ENV_VARS: dict[str, str] = {
+    "anthropic":          "ANTHROPIC_API_KEY",
+    "openai":             "OPENAI_API_KEY",
+    "openai_compatible":  "OPENAI_API_KEY",
+    "openrouter":         "OPENROUTER_API_KEY",
+    "gemini":             "GEMINI_API_KEY",
+    "google":             "GEMINI_API_KEY",
+    "groq":               "GROQ_API_KEY",
+    "together":           "TOGETHER_API_KEY",
+    "mistral":            "MISTRAL_API_KEY",
+    "ollama":             "",   # keyless
+}
+
+
+def provider_key_env(cfg: Config) -> str:
+    """Env-var name the configured LLM provider expects, or '' if keyless."""
+    name = (getattr(cfg.llm, "provider", "anthropic") or "anthropic").strip().lower()
+    return _PROVIDER_ENV_VARS.get(name, "ANTHROPIC_API_KEY")
+
+
+def has_llm_key(cfg: Config) -> bool:
+    """True if the configured provider's API key is available, OR the provider
+    is keyless (Ollama)."""
+    env_var = provider_key_env(cfg)
+    if not env_var:
+        return True   # keyless provider
+    # Explicit OPENAI_API_KEY is always honored (lets users repurpose presets).
+    openai_compat_envs = {
+        "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY",
+        "GROQ_API_KEY", "TOGETHER_API_KEY", "MISTRAL_API_KEY",
+    }
+    if env_var in openai_compat_envs and (
+        cfg.secrets.OPENAI_API_KEY or os.environ.get("OPENAI_API_KEY")
+    ):
+        return True
+    return bool(getattr(cfg.secrets, env_var, "") or os.environ.get(env_var))

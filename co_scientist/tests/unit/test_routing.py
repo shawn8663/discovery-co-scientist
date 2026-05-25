@@ -62,3 +62,59 @@ def test_cache_reads_are_cheaper_than_uncached_input() -> None:
         cache_read=8_000, cache_write=0,
     )
     assert mostly_cached < all_uncached
+
+
+def test_unknown_flash_model_prices_as_flash_not_sonnet() -> None:
+    """Brand-new gemini-3-flash-preview must NOT be priced at the conservative
+    sonnet-class fallback (otherwise the pre-flight estimator over-reports by
+    10x and the budget admission rejects work that should be affordable).
+    """
+    flash_cost = estimate_cost_usd(
+        model="google/gemini-3-flash-preview",
+        input_tokens=1_000_000, output_tokens=1_000_000,
+    )
+    # flash-tier output is ~$2.5/M, so 1M+1M tokens ≈ $2.80.
+    # sonnet fallback would be ~$18.
+    assert flash_cost < 5.0
+
+
+def test_unknown_mini_model_uses_mini_tier_pricing() -> None:
+    cost = estimate_cost_usd(
+        model="some-provider/gpt-7-mini-preview",
+        input_tokens=1_000_000, output_tokens=1_000_000,
+    )
+    # mini tier: 1.1 input + 4.4 output per million ≈ $5.5
+    # gpt-5 tier would be ~$25, sonnet ~$18
+    assert cost < 10.0
+
+
+def test_unknown_opus_class_model_uses_opus_pricing() -> None:
+    """Family hints map upward as well: an unknown opus-named model should
+    NOT silently price as a sonnet (and risk underbudgeting)."""
+    cost = estimate_cost_usd(
+        model="anthropic/claude-99-opus-experimental",
+        input_tokens=1_000_000, output_tokens=1_000_000,
+    )
+    # opus tier: 15 + 75 = $90/M+M
+    assert cost > 50.0
+
+
+def test_known_model_takes_precedence_over_family_hint() -> None:
+    """`gemini-3-flash-preview` is in the table; the family hint should not
+    override the explicit entry."""
+    flash_known = estimate_cost_usd(
+        model="gemini-3-flash-preview",
+        input_tokens=1_000_000, output_tokens=1_000_000,
+    )
+    assert 2.5 < flash_known < 3.5
+
+
+def test_completely_unknown_model_uses_conservative_fallback() -> None:
+    """No family hint match → fall back to sonnet-class so a misconfigured
+    route doesn't accidentally run unbounded on a cheap fallback."""
+    cost = estimate_cost_usd(
+        model="totally-novel-vendor/unrecognized-model-7",
+        input_tokens=1_000_000, output_tokens=1_000_000,
+    )
+    # Sonnet-class fallback: 3 + 15 = $18/M+M
+    assert 15.0 < cost < 25.0

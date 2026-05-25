@@ -77,7 +77,20 @@ async def _apply_pending(conn: aiosqlite.Connection) -> None:
             continue
         # v1 special-case: load the canonical schema.sql to avoid duplication.
         sql = SCHEMA_PATH.read_text() if version == 1 else path.read_text()
-        await conn.executescript(sql)
+        try:
+            await conn.executescript(sql)
+        except aiosqlite.OperationalError as e:
+            # When the canonical schema.sql is already ahead of an early
+            # migration (e.g. fresh init creates v1 with `feasibility`, then
+            # v2 tries to ALTER TABLE … ADD COLUMN feasibility), the ALTER
+            # becomes a no-op. Mark it applied and move on.
+            msg = str(e).lower()
+            if "duplicate column name" in msg or (
+                "already exists" in msg and "create" not in sql.lower()
+            ):
+                pass
+            else:
+                raise
         await conn.execute(
             "INSERT INTO schema_migrations(version, applied_at, name) VALUES (?, ?, ?)",
             (version, datetime.now(UTC).isoformat(), name),

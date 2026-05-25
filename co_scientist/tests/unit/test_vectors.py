@@ -54,3 +54,70 @@ async def test_faiss_offset_lookup(tmp_cfg) -> None:
     assert store.offset_of("a") == 0
     assert store.offset_of("b") == 1
     assert store.offset_of("missing") is None
+
+
+# ----------------------------- embedder fallback ----------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_make_embedder_falls_back_to_hash_when_no_keys() -> None:
+    """Without VOYAGE_API_KEY or OPENAI_API_KEY, make_embedder should return
+    HashEmbedder so dedup / proximity degrade rather than crash."""
+    from co_scientist.config import Config
+    from co_scientist.vectors.embedder import HashEmbedder, make_embedder
+
+    cfg = Config()
+    cfg.embeddings.provider = "voyage"
+    cfg.secrets.VOYAGE_API_KEY = ""
+    cfg.secrets.OPENAI_API_KEY = ""
+    emb = make_embedder(cfg)
+    assert isinstance(emb, HashEmbedder)
+
+
+@pytest.mark.asyncio
+async def test_hash_embedder_produces_normalized_unit_vectors() -> None:
+    from co_scientist.config import Config
+    from co_scientist.vectors.embedder import HashEmbedder
+
+    cfg = Config()
+    cfg.embeddings.dim = 128
+    emb = HashEmbedder(cfg)
+    vecs = await emb.embed(["microbiome inflammation hypothesis",
+                            "tournament ranking hypothesis"])
+    assert vecs.shape == (2, 128)
+    # L2-normalized → ||v|| ≈ 1
+    norms = np.linalg.norm(vecs, axis=1)
+    assert all(abs(n - 1.0) < 1e-5 for n in norms)
+
+
+@pytest.mark.asyncio
+async def test_hash_embedder_similar_texts_have_higher_cosine() -> None:
+    """The hash embedder is a bag-of-features stub, but near-duplicates of
+    a text should still produce a higher cosine than unrelated text."""
+    from co_scientist.config import Config
+    from co_scientist.vectors.embedder import HashEmbedder
+
+    cfg = Config()
+    cfg.embeddings.dim = 1024
+    emb = HashEmbedder(cfg)
+    vecs = await emb.embed([
+        "the gut microbiome drives chronic systemic inflammation",
+        "the gut microbiome drives chronic systemic inflammation in humans",
+        "quantum computing for solving prime factorization problems",
+    ])
+    sim_near = float(vecs[0] @ vecs[1])
+    sim_far  = float(vecs[0] @ vecs[2])
+    assert sim_near > sim_far
+
+
+@pytest.mark.asyncio
+async def test_make_embedder_prefers_openai_when_voyage_missing_but_openai_set() -> None:
+    from co_scientist.config import Config
+    from co_scientist.vectors.embedder import OpenAIEmbedder, make_embedder
+
+    cfg = Config()
+    cfg.embeddings.provider = "voyage"
+    cfg.secrets.VOYAGE_API_KEY = ""
+    cfg.secrets.OPENAI_API_KEY = "sk-fake"
+    emb = make_embedder(cfg)
+    assert isinstance(emb, OpenAIEmbedder)

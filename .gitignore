@@ -10,6 +10,10 @@ data/
 .env
 .env.local
 
+# Local config override (user-specific provider + model + budget choices).
+# Tracked example lives in config/default.toml.
+co-scientist.toml
+
 # Vendor (large pinned external repos)
 vendor/
 

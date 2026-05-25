@@ -1,6 +1,8 @@
 """Embedding clients.
 
-Voyage primary (`voyage-3-large` by default), OpenAI fallback.
+Voyage primary (`voyage-3-large` by default), OpenAI fallback, hash-based
+fallback for runs where no embedding API is configured.
+
 All clients return `np.ndarray` of shape (n, dim), L2-normalized so cosine
 similarity == inner product (we use FAISS `IndexFlatIP`).
 """
@@ -8,12 +10,17 @@ similarity == inner product (we use FAISS `IndexFlatIP`).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
+from itertools import pairwise
 from typing import Protocol
 
 import numpy as np
 
 from ..config import Config
+from ..logging import get_logger
+
+_log = get_logger("vectors.embedder")
 
 
 class Embedder(Protocol):
@@ -21,6 +28,12 @@ class Embedder(Protocol):
     dim: int
 
     async def embed(self, texts: list[str]) -> np.ndarray: ...
+
+
+class NoEmbeddingsAvailable(RuntimeError):
+    """Raised when no embedding backend is configured. Callers should catch
+    this and treat dedup / proximity as a soft no-op rather than failing
+    the agent."""
 
 
 def _l2_normalize(v: np.ndarray) -> np.ndarray:
@@ -100,10 +113,71 @@ class OpenAIEmbedder:
 # Resolver
 
 
+class HashEmbedder:
+    """Deterministic local fallback: a hashed-token bag-of-features vector.
+
+    Cheap, no API key, no network. Bad-but-better-than-nothing semantic
+    quality: it captures token overlap (so near-duplicates of a hypothesis
+    will land near each other) but won't catch paraphrase or semantic
+    similarity. Used when neither Voyage nor OpenAI keys are configured —
+    keeps Proximity and dedup running rather than crashing the session.
+    """
+
+    def __init__(self, cfg: Config) -> None:
+        self.model = "hash-fallback"
+        self.dim = cfg.embeddings.dim
+
+    async def embed(self, texts: list[str]) -> np.ndarray:
+        if not texts:
+            return np.zeros((0, self.dim), dtype="float32")
+
+        def _do() -> np.ndarray:
+            out = np.zeros((len(texts), self.dim), dtype="float32")
+            for i, t in enumerate(texts):
+                # Word-level murmur-ish folding: hash each token and bump
+                # the bucket. Bigram features improve discrimination.
+                tokens = (t or "").lower().split()
+                for tok in tokens:
+                    h = int.from_bytes(
+                        hashlib.blake2b(tok.encode("utf-8"), digest_size=4).digest(),
+                        "big",
+                    )
+                    out[i, h % self.dim] += 1.0
+                for a, b in pairwise(tokens):
+                    bg = f"{a}_{b}"
+                    h = int.from_bytes(
+                        hashlib.blake2b(bg.encode("utf-8"), digest_size=4).digest(),
+                        "big",
+                    )
+                    out[i, h % self.dim] += 0.5
+            return out
+
+        arr = await asyncio.to_thread(_do)
+        return _l2_normalize(arr)
+
+
 def make_embedder(cfg: Config) -> Embedder:
+    """Construct an embedder honoring `cfg.embeddings.provider`.
+
+    Auto-fallback chain: if the configured provider has no API key, fall
+    through Voyage → OpenAI → HashEmbedder so the system stays usable
+    even when no embeddings credentials are set (just with weaker
+    semantic quality in proximity / dedup).
+    """
     provider = cfg.embeddings.provider.lower()
     if provider == "voyage":
-        return VoyageEmbedder(cfg)
+        if cfg.secrets.VOYAGE_API_KEY or os.environ.get("VOYAGE_API_KEY"):
+            return VoyageEmbedder(cfg)
+        if cfg.secrets.OPENAI_API_KEY or os.environ.get("OPENAI_API_KEY"):
+            _log.warning("voyage_key_missing_using_openai_embeddings")
+            return OpenAIEmbedder(cfg)
+        _log.warning("no_embedding_key_using_hash_fallback")
+        return HashEmbedder(cfg)
     if provider == "openai":
-        return OpenAIEmbedder(cfg)
+        if cfg.secrets.OPENAI_API_KEY or os.environ.get("OPENAI_API_KEY"):
+            return OpenAIEmbedder(cfg)
+        _log.warning("openai_key_missing_using_hash_fallback")
+        return HashEmbedder(cfg)
+    if provider == "hash":
+        return HashEmbedder(cfg)
     raise ValueError(f"unknown embeddings provider: {provider}")

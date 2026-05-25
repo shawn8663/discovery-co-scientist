@@ -52,11 +52,35 @@ async def run_tool_loop(
     max_iters: int,
     parallel_cap: int = 4,
     tool_timeout_s: float = 30.0,
+    terminal_tool_names: tuple[str, ...] = (
+        "record_hypothesis",
+        "record_review",
+        "record_system_feedback",
+        "record_rubric_score",
+        "record_research_plan",
+    ),
 ) -> ToolLoopResult:
+    """Drive the assistant ↔ tool_use ↔ tool_result loop.
+
+    Loop termination:
+    - stop_reason != "tool_use" — the model signalled end_turn.
+    - The assistant response contains a `terminal_tool_names` call. These are
+      virtual "structured output capture" tools (e.g. `record_hypothesis`):
+      the assistant has already produced its final answer in tool_use.input,
+      so dispatching the tool is unnecessary and we should not invite the
+      model to call it again. Claude reliably ends its turn after calling
+      these; Gemini / OpenAI-compat models do not, so we short-circuit
+      explicitly. Without this short-circuit the loop will repeatedly
+      re-invite the recording tool until max_iters and then raise
+      ToolLoopExhausted — even though a perfectly good record was emitted
+      on the first call.
+    - max_iters reached — raise ToolLoopExhausted.
+    """
     seen_urls: set[str] = set()
     tool_calls_log: list[dict[str, Any]] = []
     iterations = 0
     current_spec = spec
+    terminal_set = set(terminal_tool_names)
 
     last: AnthropicResponse | None = None
 
@@ -85,6 +109,26 @@ async def run_tool_loop(
                 tool_calls=tool_calls_log,
                 seen_urls=seen_urls,
             )
+
+        # Early termination: if any tool_use is a terminal recording tool,
+        # treat this response as the final assistant message. We still log
+        # the call so observability sees it, but we do NOT dispatch (the
+        # registry would return "unknown tool" anyway) and we do NOT loop.
+        if any(getattr(b, "name", "") in terminal_set for b in tool_uses):
+            for b in tool_uses:
+                tool_calls_log.append({
+                    "name": getattr(b, "name", ""),
+                    "args": dict(getattr(b, "input", {}) or {}),
+                    "is_error": False,
+                    "duration_ms": 0,
+                })
+            return ToolLoopResult(
+                response=resp,
+                iterations=iterations,
+                tool_calls=tool_calls_log,
+                seen_urls=seen_urls,
+            )
+
         tool_uses = tool_uses[:parallel_cap]
 
         # Dispatch in parallel

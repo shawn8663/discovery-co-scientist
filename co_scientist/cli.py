@@ -16,7 +16,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .config import has_anthropic_key, load_config
+from .config import has_llm_key, load_config, provider_key_env
 from .logging import get_logger, setup_logging
 from .storage import db as db_mod
 
@@ -69,17 +69,22 @@ def init(ctx: typer.Context) -> None:
     asyncio.run(db_mod.init_db(cfg))
 
     # Report
+    env_var = provider_key_env(cfg)
     tbl = Table(title="Init complete", show_header=False, box=None)
     tbl.add_row("data dir", str(cfg.data_dir))
     tbl.add_row("database", str(cfg.db_path))
-    tbl.add_row("anthropic key set", "yes" if has_anthropic_key(cfg) else "[red]no[/red]")
+    tbl.add_row("LLM provider", cfg.llm.provider)
+    tbl.add_row(
+        f"{env_var or '(keyless)'} set",
+        "yes" if has_llm_key(cfg) else "[red]no[/red]",
+    )
     tbl.add_row("science-skills", cfg.science_skills.path)
     console.print(tbl)
 
-    if not has_anthropic_key(cfg):
+    if not has_llm_key(cfg):
         console.print(
-            "[yellow]ANTHROPIC_API_KEY is not set. Most commands will require it. "
-            "See .env.example.[/yellow]"
+            f"[yellow]{env_var} is not set; set it (or change [llm] provider in your "
+            f"config) before running a session. See .env.example.[/yellow]"
         )
 
 
@@ -191,8 +196,9 @@ def run(
 ) -> None:
     """Start a fresh research session. Generation → Reflection → Ranking tournament → Meta-review."""
     cfg, _ = ctx.obj
-    if not has_anthropic_key(cfg):
-        console.print("[red]ANTHROPIC_API_KEY is not set. See .env.example.[/red]")
+    if not has_llm_key(cfg):
+        env_var = provider_key_env(cfg)
+        console.print(f"[red]{env_var} is not set (LLM provider = {cfg.llm.provider}). See .env.example.[/red]")
         raise typer.Exit(1)
 
     if budget_usd is not None:
@@ -232,8 +238,9 @@ def resume(
 ) -> None:
     """Resume a paused or interrupted session."""
     cfg, _ = ctx.obj
-    if not has_anthropic_key(cfg):
-        console.print("[red]ANTHROPIC_API_KEY is not set. See .env.example.[/red]")
+    if not has_llm_key(cfg):
+        env_var = provider_key_env(cfg)
+        console.print(f"[red]{env_var} is not set (LLM provider = {cfg.llm.provider}). See .env.example.[/red]")
         raise typer.Exit(1)
     from .agents.supervisor import Supervisor
 
