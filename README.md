@@ -1,6 +1,6 @@
 # AI Co-Scientist
 
-A multi-agent system for tournament-style scientific hypothesis generation, ranking, and synthesis. Built on the architecture described in [`reference/`](reference/) (Google's Co-Scientist), implemented in Python on top of the raw Anthropic SDK.
+A multi-agent system for tournament-style scientific hypothesis generation, ranking, and synthesis. Built on the architecture described in [`reference/`](reference/) (Google's Co-Scientist), implemented in Python on top of pluggable LLM provider SDKs.
 
 The system takes a natural-language research goal, runs six specialized LLM agents in a coordinated loop, and produces a *Research Overview* of the top-ranked hypotheses:
 
@@ -11,7 +11,22 @@ The system takes a natural-language research goal, runs six specialized LLM agen
 - **Proximity** — embeds and clusters hypotheses to drive dedup and informative pairings
 - **Meta-review** — synthesizes system-wide feedback and the final research overview
 
-A **Supervisor** schedules agents via a durable task queue (SQLite-backed) with bounded concurrency. The full design is in [`/Users/kuan-linhuang/.claude/plans/based-on-these-txt-unified-pearl.md`](../../.claude/plans/based-on-these-txt-unified-pearl.md).
+A **Supervisor** schedules agents via a durable task queue (SQLite-backed) with bounded concurrency.
+
+> **Other docs**
+> - [`docs/BENCH_RESULTS.md`](docs/BENCH_RESULTS.md) — every cross-model bench ever run on this code, with per-candidate Elo, every hypothesis produced, gold-set hits, and direct file pointers. Auto-generated from the bench DB.
+> - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — milestone-by-milestone build history.
+
+## Contents
+
+- [Architecture](#architecture)
+- [Install](#install)
+- [Initialize](#initialize)
+- [Run a research session](#run-a-research-session)
+- [LLM provider](#llm-provider)
+- [Configuration](#configuration)
+- [Bench: compare models head-to-head](#bench-compare-models-head-to-head)
+- [Repository layout](#repository-layout)
 
 ## Architecture
 
@@ -64,23 +79,6 @@ A **Supervisor** schedules agents via a durable task queue (SQLite-backed) with 
                    (WAL, busy_timeout, schema_migrations idempotent runner)
 ```
 
-## Status
-
-**Through M9 — full system shipped. Multi-provider + bench landed.** 182 unit tests passing, ruff clean.
-
-- **M0 — Skeleton.** Package layout, pydantic-settings config, SQLite schema + migrations (12 tables incl. `spans`/`events`/`elo_journal`), ULID + deterministic-hash IDs, structlog JSONL logging.
-- **M1 — Storage, vectors, tools.** 10 repos; Voyage+OpenAI embedders; FAISS `IndexFlatIP` per-session store; built-in tools (`web_search`, `web_fetch`, `pubmed_search`, `arxiv_search`, `europe_pmc_search`); science-skills bridge that parses `SKILL.md` + shells out to scripts with a path-traversal guard.
-- **M2 — Anthropic SDK layer.** 14 prompt templates; Jinja2 loader; retry honoring Retry-After for 429/529; `TokenBudget` with per-agent shares; model routing with never-degrade list; `AnthropicClient` with 4-tier `cache_control`, retry, transcript persistence, USD accounting; tool-loop driver that preserves thinking-block signatures and tracks URLs for citation honesty; `UNTRUSTED_SOURCE` quoting for prompt-injection defense.
-- **M3 — Generation + Reflection.** `BaseAgent`; literature-strategy `GenerationAgent` with `record_hypothesis` tool, dedup via FAISS, hallucinated-URL filter; full-mode `ReflectionAgent` with `record_review` + URL filter.
-- **M4 — Ranking + Elo tournament.** `AddToTournament` + `RunTournamentBatch` with pair selection weighted by `exp(-Δelo/200) · (1 - cosine_sim)`, debate-vs-pairwise mode switching, anchor-cached debates, idempotent `elo_journal` updates.
-- **M5 — Supervisor scheduling.** Durable resume with lease reclaim + max-attempts dead-letter; hybrid termination (BUDGET / WALL_CLOCK / ELO_STABLE / EXTERNAL); `StabilityTracker` with snapshot history; `decide_next_steps` for idle refinement; pause/resume/abort via DB-flagged session.status. In-memory `EventBus` shared with the web UI.
-- **M6 — Evolution + Proximity + Meta-review.** Evolution strategies (combine on most-distant top pair, simplify, feasibility, out_of_box) with parent_ids; Proximity batch recluster with sklearn agglomerative; periodic Meta-review system feedback (auto-injected into future Generation/Evolution prompts); final research overview synthesis.
-- **M7 — Web UI.** FastAPI + Jinja2 + htmx + Pico.css + SSE. Pages: sessions index, new session form, session dashboard (live leaderboard, match feed, budget gauges), hypothesis detail with reviews, final overview. API endpoints for pause/resume/abort/feedback. `co-scientist serve` boots both the UI and a Supervisor in one process.
-- **M8 — Safety + observability + evals.** Haiku-backed safety classifier with allow/warn/quarantine/block actions; citation verifier (fetch URL, check excerpt-substring); read-only `obs/metrics` (tokens, cost, cache hit ratio, P50/P95 latency, dead tasks) backing `/api/sessions/{id}/metrics`; LLM-as-judge rubric runner with bundled fixtures; `co-scientist eval [agent] [--offline]`.
-- **M9 — Batch API + estimator + resume hardening.** `BatchPool` for sub-decile tournament matches (50% cheaper Batch API submission with safe requeue on failure); pre-flight `estimator` that warns when projected USD spend > 1.2x budget; `co-scientist estimate` subcommand.
-
-**No network calls in CI** — Anthropic / embeddings / web tools are mocked or stubbed; live smoke tests are manual.
-
 ## Install
 
 ```bash
@@ -90,19 +88,42 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 
 cp .env.example .env
-# fill in ANTHROPIC_API_KEY (default provider) or OPENAI_API_KEY,
-# depending on which LLM vendor you select below.
+# fill in the API key for whichever LLM provider you'll use (see below).
+```
+
+## Initialize
+
+```bash
+co-scientist init
+co-scientist list
+```
+
+`init` creates `data/` (artifacts, vectors, logs) and applies migrations to `data/co_scientist.db`. The output prints which LLM provider it sees configured and whether its API key is set.
+
+## Run a research session
+
+```bash
+co-scientist run "Identify hypotheses about microbiome-driven inflammation" \
+  --n 3 --budget-usd 2.0 --wall-clock 600
+```
+
+This kicks off Generation → Reflection → Ranking → Evolution → Meta-review under the configured LLM provider. The Supervisor schedules tasks, the Elo tournament refines a leaderboard, and the final research overview is written to `data/artifacts/<session_id>/final/overview.md`.
+
+```bash
+co-scientist serve            # FastAPI + htmx + SSE dashboard at localhost:7878
+co-scientist report <id>      # print the final overview
+co-scientist status <id>      # session metadata + counts
+co-scientist pause <id> | resume <id> | abort <id>
+co-scientist feedback <id> --kind directive --text "focus on metabolic pathways"
 ```
 
 ## LLM provider
 
-The agents talk to one LLM provider per session, configured in
-[`config/default.toml`](config/default.toml) (override with your own
-`co-scientist.toml`):
+The agents talk to one LLM provider per session, configured in [`config/default.toml`](config/default.toml) (override with your own `co-scientist.toml`):
 
 ```toml
 [llm]
-provider = "anthropic"   # anthropic | openai | openai_compatible
+provider = "anthropic"
 ```
 
 | provider              | Endpoint                                                | Required key            | Example models                                            |
@@ -115,9 +136,9 @@ provider = "anthropic"   # anthropic | openai | openai_compatible
 | `together`            | api.together.xyz                                        | `TOGETHER_API_KEY`      | `meta-llama/Llama-3.3-70B-Instruct-Turbo`                 |
 | `mistral`             | api.mistral.ai                                          | `MISTRAL_API_KEY`       | `mistral-large-latest`, `codestral-latest`                |
 | `ollama`              | localhost:11434 — local models                          | *(none)*                | `llama3.3:70b`, `qwen2.5:32b`                             |
-| `openai_compatible`   | Anything else; set `[llm.openai] base_url` explicitly   | `OPENAI_API_KEY` (or any non-empty string for keyless servers) | depends |
+| `openai_compatible`   | Anything else; set `[llm.openai] base_url` explicitly   | `OPENAI_API_KEY`        | depends                                                   |
 
-OpenRouter exposes one API for every vendor:
+Mixing vendors per session requires picking the provider once; for multi-vendor routing in a single session, use `provider = "openrouter"` and let OpenRouter dispatch upstream per model:
 
 ```toml
 [llm]
@@ -133,26 +154,7 @@ ranking_pairwise   = "google/gemini-2.5-flash"
 metareview_final   = "anthropic/claude-opus-4-7"
 ```
 
-Gemini directly:
-
-```toml
-[llm]
-provider = "gemini"
-
-[models]
-generation       = "gemini-2.5-pro"
-reflection       = "gemini-2.5-pro"
-ranking_pairwise = "gemini-2.5-flash"
-metareview_final = "gemini-2.5-pro"
-```
-
-Mixing vendors per session requires picking the provider once; for
-multi-vendor routing in a single session, use `provider = "openrouter"`
-and let OpenRouter dispatch to the upstream API per model.
-
-Cost is estimated via `co_scientist/llm/routing.py`'s `PRICE_TABLE`;
-unknown models fall back to a sonnet-class default — edit the table or
-set tighter `[run] budget_usd` if running on a new model.
+Cost is estimated via `co_scientist/llm/routing.py`'s `PRICE_TABLE`; unknown models match a family-hint (flash / mini / opus / sonnet / gemini / llama / mistral) so brand-new previews price sensibly. Tighten `[run] budget_usd` if running on a new model you haven't sanity-checked.
 
 **Provider feature support:**
 
@@ -163,247 +165,64 @@ set tighter `[run] budget_usd` if running on a new model.
 | Prompt-cache breakpoints | ✅    | ❌                | ❌           | ❌                |
 | Batch API (50%-off ranking) | ✅ | ❌            | ❌           | ❌                |
 
-## Initialize
-
-```bash
-co-scientist init
-co-scientist list
-```
-
-`init` creates `data/` (artifacts, vectors, logs) and applies migrations to `data/co_scientist.db`.
-
 ## Configuration
 
 Layered: [`config/default.toml`](config/default.toml) → `~/.co-scientist/config.toml` → `./co-scientist.toml` → `--config <path>`. Secrets come from environment only (see [`.env.example`](.env.example)).
 
 ## Bench: compare models head-to-head
 
-`co-scientist bench` runs the same goal under N different `(provider, model)`
-configurations and ranks them via a single shared Elo tournament. Each
-candidate independently generates hypotheses; then every candidate-pair
-plays `--matches` head-to-head debates, judged by ONE fixed judge model
-(picked separately so no candidate scores its own work).
+`co-scientist bench` runs the same goal under N different `(provider, model)` configurations and ranks them via a single shared Elo tournament. Each candidate independently generates hypotheses; then every candidate-pair plays `--matches` head-to-head debates, judged by ONE fixed judge model (picked separately so no candidate scores its own work).
 
-### Presets at a glance
+> **For live numbers** — per-candidate Elo, the actual hypotheses each model proposed, gold-set hits, and what the data showed — see [`docs/BENCH_RESULTS.md`](docs/BENCH_RESULTS.md). It includes a headline-findings section at the top so you don't have to scroll through every bench.
+
+### Presets
 
 | `--preset`               | What it does |
 | ---                      | --- |
-| `paper`                  | Co-Scientist paper baselines (plus Haiku) via OpenRouter, head-to-head Elo only |
-| `paper-aml`              | Same candidates + the paper's AML drug-repurposing goal + 5-drug gold-set recall (Binimetinib, Pacritinib, Cerivastatin, Pravastatin, DMF) |
+| `paper`                  | Co-Scientist paper baselines (Gemini 2 Flash Thinking, Gemini 2 Pro, OpenAI o1, Claude Haiku) via OpenRouter, head-to-head Elo only |
+| `paper-aml`              | Same candidates + the paper's AML drug-repurposing goal + gold-set recall scoring (defaults to the strict top-3 set: Nanvuranlat / KIRA6 / Leflunomide) |
 | `paper-aml-vs-raw`       | `paper-aml` but each model runs **both** in the full pipeline AND as a single raw LM call — isolates the multi-agent harness's value-add |
 | `frontier-aml-vs-raw`    | Same pipeline-vs-raw setup but with current frontier models (Claude Opus 4.7, GPT-5, Gemini 3 Pro / Flash) |
 
+```bash
+# Reproduce the paper preference-ranking comparison:
+co-scientist bench --preset paper --budget-per-candidate 1.5
+
+# Score against the paper's AML drug picks:
+co-scientist bench --preset paper-aml --n 3 --matches 2
+
+# Compare multi-agent pipeline vs raw model call on the same goal:
+co-scientist bench --preset paper-aml-vs-raw --n 1 --budget-per-candidate 1.5
+
+# Current frontier models, pipeline vs raw:
+co-scientist bench --preset frontier-aml-vs-raw --n 1 --budget-per-candidate 2.0
+```
+
 ### Pipeline vs raw LM (one model, isolated)
 
-The `--preset *-vs-raw` presets pit each model's **full co-scientist Generation
-pipeline** (literature tools + tool loop + dedup + `record_hypothesis`)
-against a **single raw LM call** with the same model + a forced
-`record_hypothesis` function call (no tools). Lets you measure how much
-of the system's output quality comes from the multi-agent harness vs the
-underlying model.
+The `--preset *-vs-raw` presets pit each model's **full co-scientist Generation pipeline** (literature tools + tool loop + dedup + `record_hypothesis`) against a **single raw LM call** with the same model + a forced `record_hypothesis` function call (no tools). Lets you measure how much of the system's output quality comes from the multi-agent harness vs the underlying model. → live numbers in [`docs/BENCH_RESULTS.md`](docs/BENCH_RESULTS.md#headline-findings).
 
-Live 2-model vs-raw run on the AML goal (12 matches, judged by
-`google/gemini-3-flash-preview`, $0.15 total):
+### Gold-set scoring (AML drug repurposing)
 
-```
-                                          W-L   mean Elo  $ spent   latency
-flash3   [pipeline]  google/gemini-3-...  4-2    1234     $0.0275   14.9s
-flash3   [raw]       google/gemini-3-...  5-1    1228     $0.0033    5.0s
-gpt4o    [pipeline]  openai/gpt-4o        3-3    1201     $0.1040   18.5s
-gpt4o    [raw]       openai/gpt-4o        0-6    1154     $0.0105    3.7s
-```
+`paper-aml*` presets score **recall** against a curated answer key from the Co-Scientist paper. Two gold sets ship; both stay registered so historical bench artifacts remain interpretable.
 
-Read: for `gemini-3-flash-preview`, the multi-agent harness is **within
-noise** of the raw model (Elo 1234 vs 1228) but costs 8× more and is
-3× slower. For `gpt-4o`, the harness **wins decisively** (Elo 1201 vs
-1154, win-rate 3-3 vs 0-6). The value-add of the agent stack depends on
-the base model — strong reasoning-tuned models often need it less.
+| label                                                   | size | what it is |
+| ---                                                     | --- | --- |
+| `aml-repurposing-paper-top3` *(default for `paper-aml*`)* | 3 | Top-3 of the paper's *ranked* list under the **strict methodology**: candidates with no prior published AML repurposing, no prior preclinical evidence in AML, and no external inputs (no DepMap scores, no expert curation). → **Nanvuranlat (JPH-203 / KYT-0353), KIRA6, Leflunomide (Arava / HWA-486 / Teriflunomide / Aubagio)** |
+| `aml-repurposing-paper-5`                               | 5 | Broader 5-drug list referenced in the paper's main text. Includes well-known candidates, some with prior preclinical AML evidence. → **Binimetinib (MEK162), Pacritinib (SB1518 / Vonjo), Cerivastatin (Baycol), Pravastatin (Pravachol), Dimethyl fumarate (DMF / BG-12 / Tecfidera)** |
 
-### Quick start: `--preset paper`
-
-Reproduce the Co-Scientist paper's preference-ranking baselines
-(plus Haiku) in one command. OpenRouter retired the experimental Gemini
-2.0 models the paper used; the preset substitutes the closest current
-analogues and documents the swap in `co_scientist/bench/presets.py`.
+Swap with `--goldset`:
 
 ```bash
-co-scientist bench "Identify hypotheses about microbiome-driven inflammation" \
-  --preset paper \
-  --budget-per-candidate 1.5 --judge-budget 1.0
+co-scientist bench --preset paper-aml --goldset aml-repurposing-paper-5   # broader list
+co-scientist bench --preset paper-aml --goldset none                       # head-to-head only
 ```
 
-Live run on this goal — 12 matches, **$0.40 total**, judged by
-`google/gemini-3-flash-preview` (the preset's suggested judge):
-
-```
-Bench bnc_01KSG7HM47116412H3NV3VKDF8 — 12 matches
-┏━━━━━━┳────────────────────────┬─────────────────────────────────┬─────┬──────────┬────────┓
-┃ rank ┃ label                  ┆ provider:model                  ┆ W-L ┆ mean Elo ┆ $spent ┃
-┡━━━━━━╇────────────────────────┼─────────────────────────────────┼─────┼──────────┼────────┩
-│  1   │ gemini-2-flash-thinking│ openrouter:google/gemini-2.0-fl…│ 6-0 │   1284   │ 0.0026 │
-│  2   │ gemini-2-pro           │ openrouter:google/gemini-2.5-pro│ 4-2 │   1229   │ 0.0342 │
-│  3   │ openai-o1              │ openrouter:openai/o1            │ 2-4 │   1165   │ 0.2326 │
-│  4   │ claude-haiku-4.5       │ openrouter:anthropic/claude-ha…│ 0-6 │   1123   │ 0.1338 │
-└──────┴────────────────────────┴─────────────────────────────────┴─────┴──────────┴────────┘
-```
-
-Note: when judge and a candidate share the same model family there is a
-documented echo-bias. The judge-side default
-(`google/gemini-3-flash-preview`) is configurable via `--judge`; consider
-running with a different judge family if you want to control for that.
-
-### AML drug-repurposing benchmark (gold-set scoring)
-
-`co-scientist bench --preset paper-aml` runs every candidate against the
-paper's AML drug-repurposing goal and scores **recall** against a curated
-answer key from the Co-Scientist paper. The paper actually reports
-**two** AML repurposing results, and we keep both gold sets so you can
-score against either; past bench artifacts record which set they used
-in `bench_runs.goldset_label`.
-
-| label                              | size | what it is |
-| ---                                | --- | --- |
-| `aml-repurposing-paper-top3` (default for `paper-aml*`) | 3 | The top-3 of the paper's *ranked* list under the **strict methodology**: candidates with no prior published AML repurposing, no prior preclinical evidence in AML, and no external inputs (no DepMap dependency scores, no expert curation). → **Nanvuranlat (JPH-203 / KYT-0353), KIRA6, Leflunomide (Arava / HWA-486 / Teriflunomide / Aubagio)** |
-| `aml-repurposing-paper-5`          | 5 | The broader 5-drug list referenced in the paper's main text. Includes well-known candidates, some with prior preclinical AML evidence. → **Binimetinib (MEK162 / Mektovi), Pacritinib (SB1518 / Vonjo), Cerivastatin (Baycol), Pravastatin (Pravachol), Dimethyl fumarate (DMF / BG-12 / Tecfidera)** |
-
-The `paper-aml` preset uses the strict top-3 by default. Swap with `--goldset`:
-
-```bash
-# Strict top-3 methodology (default)
-co-scientist bench --preset paper-aml --n 5 --matches 2
-
-# Broader 5-drug list (the earlier vintage)
-co-scientist bench --preset paper-aml --goldset aml-repurposing-paper-5 \
-  --n 5 --matches 2
-
-# Disable gold-set scoring entirely for a paper-aml run
-co-scientist bench --preset paper-aml --goldset none
-```
-
-The matcher is whole-token, case-insensitive, and looks at every searched
-field of every hypothesis (title / summary / full_text / `entities` /
-citation excerpts). Drug **class** mentions (e.g. "DHODH inhibitor")
-do **not** count — the candidate has to name the actual compound
-(or one of its registered aliases).
-
-The strict top-3 goal asks for:
-> *"a ranked list of drug repurposing candidates for AML; each candidate must have no prior published AML repurposing, no prior preclinical evidence in AML; use only internal knowledge — no DepMap scores, no expert curation."*
-
-This makes the bench harder than naming any FDA-approved drug — the model
-has to **not** rely on already-known AML literature.
-
-#### Where past results live
-
-```bash
-# Inspect every AML bench you've run, with the gold set it scored against:
-sqlite3 data/co_scientist.db <<'SQL'
-SELECT id, created_at, goldset_label,
-       (SELECT COUNT(*) FROM bench_candidates WHERE bench_id=br.id) AS n_cand
-  FROM bench_runs br
- WHERE research_goal LIKE '%AML%' OR research_goal LIKE '%leukemia%'
- ORDER BY created_at DESC;
-SQL
-```
-
-Per-candidate hits + per-entity provenance (which alias matched, which
-hypothesis, which field) live in `bench_candidates.gold_hit_names` and
-the bench JSON artifact under
-`data/artifacts/<session>/bench/<bench_id>.json`.
-
-Note: with small `--n`, recall against either gold set is sensitive to
-luck — the paper surfaced these after running 15 expert-curated goals.
-For comparable numbers raise `--n` to 5+ and run multiple seeds.
-
-#### Recorded results
-
-Every bench ever run on this codebase — with per-candidate Elo, the
-actual hypotheses each model produced, post-hoc rescore against every
-gold set, and direct file pointers to the artifacts — lives in
-[**`docs/BENCH_RESULTS.md`**](docs/BENCH_RESULTS.md). Regenerate after a
-new run with:
-
-```bash
-python scripts/build_bench_report.py
-```
-
-Three reference benches summarized below. Bench IDs are stable; load the
-JSON artifact at `data/artifacts/<session_id>/bench/<bench_id>.json` for
-full detail.
-
-**1. `paper-aml`** — strict top-3 gold set, paper baselines + Haiku (pipeline mode only)
-
-| candidate                    | n_hyps | W-L | mean Elo | $ spent |
-| ---                          | ---    | --- | ---      | ---     |
-| openai-o1                    | 2      | 2-2 | 1201     | $1.16   |
-| gemini-2-flash-thinking      | 2      | 2-2 | 1199     | $0.001  |
-| gemini-2-pro                 | 1      | 2-2 | 1199     | $0.154  |
-| claude-haiku-4.5             | 0      | 0-0 | —        | $0.576  |
-
-Total: 6 matches, $1.89. **top-3 hits: 0/3. 5-drug hits: 0/5.**
-Drugs proposed: Riluzole, Carglumic Acid, Auranofin, Seclidemstat,
-Teprotumumab. Most pipeline attempts failed (Haiku tool-loop exhausted
-on all 3; Gemini Pro didn't emit `record_hypothesis` on 2 of 3; o1 hit
-its $1.50 per-candidate cap after 2 calls).
-
-**2. `paper-aml-vs-raw`** — same models × pipeline-or-direct, strict top-3
-
-| candidate                          | n_hyps | W-L | mean Elo | $ spent |
-| ---                                | ---    | --- | ---      | ---     |
-| **gemini-2-pro [direct]**          | 1      | **5-0** | **1274** | $0.037 |
-| **claude-haiku-4.5 [direct]**      | 1      | 4-1 | 1244     | $0.007  |
-| openai-o1 [direct]                 | 1      | 3-2 | 1213     | $0.281  |
-| gemini-2-pro [pipeline]            | 1      | 2-3 | 1183     | $0.0004 |
-| gemini-2-flash-thinking [direct]   | 1      | 1-4 | 1158     | $0.0002 |
-| openai-o1 [pipeline]               | 1      | 0-5 | 1128     | $0.405  |
-| gemini-2-flash-thinking [pipeline] | 0      | —   | —        | $0.018  |
-| claude-haiku-4.5 [pipeline]        | 0      | —   | —        | $0.124  |
-
-Total: 15 matches, $0.87. **top-3 hits: 0/3. 5-drug hits: 0/5.**
-
-Headline result: **direct mode beat pipeline mode for every paper-baseline
-model that produced hypotheses in both modes**. o1's pipeline went **0-5**
-against its own direct. The literature tool-loop appears to hurt these
-older models more than help. Drugs proposed: GSK2981278, Roflumilast,
-Sodium Phenylbutyrate, Manidipine, Ezetimibe, Finerenone.
-
-**3. `frontier-aml-vs-raw`** — current frontier × pipeline-or-direct, strict top-3
-
-| candidate                       | n_hyps | W-L | mean Elo | $ spent | notes |
-| ---                             | ---    | --- | ---      | ---     | ---   |
-| **claude-opus-4.7 [direct]**    | 1      | **1-0** | **1216** | $0.165  | proposed **Pacritinib** |
-| gemini-3-flash [direct]         | 1      | 0-1 | 1184     | $0.001  | proposed Tafenoquine |
-| claude-opus-4.7 [pipeline]      | 0      | —   | —        | $0.833  | session budget exhausted |
-| gpt-5 [pipeline]                | 0      | —   | —        | $0.427  | tool-loop exhausted |
-| gpt-5 [direct]                  | 0      | —   | —        | $0.249  | invalid record (missing fields) |
-| gemini-3-pro [pipeline]         | 0      | —   | —        | $0.148  | tool-loop exhausted |
-| gemini-3-pro [direct]           | 0      | —   | —        | $0.000  | hit max_tokens before tool call |
-| gemini-3-flash [pipeline]       | 0      | —   | —        | $0.002  | tool-loop exhausted |
-
-Total: 1 match, $1.83. **top-3 hits: 0/3. 5-drug hits: 1/5 ✓ Pacritinib**
-(via `anthropic/claude-opus-4.7` in direct mode — the only paper-list hit
-across all three benches). All 4 pipeline modes failed; 3 of 4 direct
-modes either lost or produced unusable output. **Strong frontier models
-need a less constrained prompt + higher budget caps to use the pipeline
-fruitfully.**
-
-#### What these results suggest
-
-- The strict no-prior-evidence + no-DepMap prompt is genuinely hard.
-  Models tend to default to well-known AML repurposing candidates
-  (Auranofin, Itraconazole, Venetoclax — all of which violate the
-  "no prior evidence" constraint).
-- The multi-agent harness adds value *conditional on* the model being
-  able to follow the tool-use protocol. Smaller models (Haiku, Gemini
-  Flash) often fail to complete the loop on this prompt, defaulting
-  to free-text or exhausting the iteration cap.
-- Direct mode is a better baseline than the pipeline for cheap models
-  on this task — useful evidence that the harness's gain is not free.
+The matcher is whole-token, case-insensitive, and looks at every searched field of every hypothesis (title / summary / full_text / `entities` / citation excerpts). Drug **class** mentions (e.g. "DHODH inhibitor") do **not** count — the candidate has to name the actual compound (or one of its registered aliases).
 
 ### Custom candidates
 
-`label=provider:model[@mode]`. `mode` is `pipeline` (default) or
-`direct`. Pipeline goes through the full Generation agent stack;
-direct is a single forced-tool LM call with no literature tools.
+`label=provider:model[@mode]`. `mode` is `pipeline` (default) or `direct`. Pipeline goes through the full Generation agent stack; direct is a single forced-tool LM call with no literature tools.
 
 ```bash
 co-scientist bench "Identify hypotheses about X" \
@@ -414,27 +233,36 @@ co-scientist bench "Identify hypotheses about X" \
   --judge anthropic:claude-sonnet-4-6
 ```
 
+### Where results live
+
+Every bench writes to SQLite + JSON on disk:
+
+```
+data/co_scientist.db                          ← SQLite, all metadata
+  bench_runs                                  one row per bench
+  bench_candidates                            one row per (bench × candidate × mode)
+  bench_matches                               one row per head-to-head
+
+data/artifacts/<session_id>/                  ← JSON on disk
+  bench/<bench_id>.json                       run summary + per-entity gold_hit_detail
+  hypotheses/<hyp_id>.json                    every hypothesis the bench produced
+  transcripts/generation/<trn_id>.json        every LLM call
+```
+
+The auto-generated [`docs/BENCH_RESULTS.md`](docs/BENCH_RESULTS.md) (rebuild with `python scripts/build_bench_report.py`) walks every recorded bench and renders the per-candidate result table, every hypothesis attributed to the model that produced it, and a post-hoc rescore against every registered gold set.
+
 ### Mechanics
 
-- **Generation runs in parallel** per candidate under a deep-copied
-  Config (`cfg.llm.provider`, `cfg.models.*`, thinking budgets zeroed
-  for non-Anthropic).
-- **Round-robin pairings**: every pair plays `--matches` head-to-heads
-  (one random hypothesis from each side per match).
-- **Structured verdict** via a forced `record_verdict` function call —
-  no fragile `better idea: <N>` text parsing across providers.
-- **Per-candidate stats** persisted to `bench_candidates`: hyp count,
-  W-L, mean / top Elo, $ spent, p50 latency, last error.
-- **Each match persisted** to `bench_matches` with both sides'
-  hypothesis text, pre/post Elo, judge rationale, cost & latency.
-- Bench runs are **isolated from regular sessions** — they don't write
-  to `tournament_matches` or affect any session's leaderboard.
+- **Generation runs in parallel** per candidate under a deep-copied Config (`cfg.llm.provider`, `cfg.models.*`, thinking budgets zeroed for non-Anthropic).
+- **Round-robin pairings**: every pair plays `--matches` head-to-heads (one random hypothesis from each side per match).
+- **Structured verdict** via a forced `record_verdict` function call — no fragile `better idea: <N>` text parsing across providers.
+- Bench runs are **isolated from regular sessions** — they don't write to `tournament_matches` or affect any session's leaderboard.
 
 ## Repository layout
 
 ```
 co_scientist/
-  agents/       # supervisor + 6 specialized agents (M3+)
+  agents/       # supervisor + 6 specialized agents
   bench/        # cross-model bench runner (compare via Elo tournament)
   llm/          # provider abstraction (anthropic/openai/openrouter/gemini/...),
                 # tool loop, budgets, routing, retry
@@ -446,10 +274,15 @@ co_scientist/
   obs/          # spans, metrics
   web/          # FastAPI + htmx + SSE UI + sanitized markdown renderer
   evals/        # per-agent + e2e + regression evals
-  tests/        # 180+ unit tests + fixtures + smoke
+  tests/        # 213 unit tests + fixtures + smoke
 config/
   default.toml
   prompts/      # Jinja2 templates per agent.mode
+docs/
+  BENCH_RESULTS.md   # every bench ever run (auto-generated)
+  DEVELOPMENT.md     # milestone-by-milestone build history
+scripts/
+  build_bench_report.py
 reference/      # input materials (pseudocode, prompts, diagrams)
 data/           # gitignored; runtime artifacts
 vendor/         # gitignored; pinned clone of google-deepmind/science-skills

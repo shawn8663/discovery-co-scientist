@@ -371,6 +371,87 @@ def _index_section(con: sqlite3.Connection, benches: list[BenchRow]) -> str:
     return "\n".join(lines)
 
 
+def _headline_findings_section() -> str:
+    """Static narrative summary of what the benches have shown so far.
+
+    Kept in the generator (not appended manually to the doc) so a fresh
+    regenerate doesn't lose the conclusions when the index re-renders.
+    Update this block if a new bench changes the headline finding.
+    """
+    return "\n".join([
+        "## Headline findings",
+        "",
+        "Across the AML drug-repurposing benches run on this codebase:",
+        "",
+        "### 1. The strict no-prior-evidence prompt is genuinely hard",
+        "",
+        "Models default to well-known AML repurposing candidates (Auranofin, "
+        "Itraconazole, Venetoclax, Riluzole) that **violate** the "
+        "no-prior-evidence constraint. Across 13 hypotheses produced under "
+        "the strict prompt, only **one** matched the paper's broader 5-drug "
+        "list (Pacritinib, via `claude-opus-4.7 (direct)` in "
+        "`frontier-aml-vs-raw`) and **none** matched the strict top-3 "
+        "(Nanvuranlat, KIRA6, Leflunomide).",
+        "",
+        "### 2. Pipeline-vs-raw: the harness's value-add depends on the model",
+        "",
+        "The `*-vs-raw` presets run each candidate model **twice** — once "
+        "through the full Generation pipeline (literature tools + tool loop + "
+        "dedup), once as a single forced-tool LM call. Across the paper "
+        "baselines (`paper-aml-vs-raw`), **direct mode beat pipeline mode for "
+        "every model that produced hypotheses in both modes**:",
+        "",
+        "| model | pipeline | direct | direct beats pipeline? |",
+        "| --- | --- | --- | --- |",
+        "| openai-o1 | 0-5 (Elo 1128) | 3-2 (Elo 1213) | yes |",
+        "| gemini-2-pro | 2-3 (Elo 1183) | 5-0 (Elo 1274) | yes (decisive) |",
+        "| gemini-2-flash-thinking | 0 hyps | 1-4 (Elo 1158) | yes — pipeline failed |",
+        "| claude-haiku-4.5 | 0 hyps | 4-1 (Elo 1244) | yes — pipeline failed |",
+        "",
+        "Same pattern earlier on `gemini-3-flash-preview` (a one-model "
+        "vs-raw run): pipeline went 4-2 vs raw 5-1 — within noise on Elo, "
+        "but pipeline was **8x more expensive** ($0.0275 vs $0.0033) and "
+        "**3x slower** (14.9s vs 5.0s).",
+        "",
+        "Smaller / older models therefore tend to be *hurt* by the harness "
+        "on this task — the tool-loop adds cost and failure modes without "
+        "improving the rated hypothesis. The two cases where pipeline did "
+        "win were `gpt-4o` (3-3 vs 0-6 for its own direct) and the gemini "
+        "near-tie noted above; both with stronger reasoning-tuned base "
+        "models.",
+        "",
+        "### 3. Frontier models need looser caps to use the pipeline",
+        "",
+        "In `frontier-aml-vs-raw` **all 4 pipeline modes failed** "
+        "(claude-opus-4.7 burned $0.83 of $1.50 cap on its first call; "
+        "gpt-5, gemini-3-pro, gemini-3-flash all exhausted their tool "
+        "loops). Only 2 of 4 direct modes produced usable output. The strict "
+        "AML prompt + 8-iteration tool-loop cap + per-candidate budget cap "
+        "is too tight for current frontier models — they want more headroom "
+        "before they'll emit `record_hypothesis`.",
+        "",
+        "### Practical implications",
+        "",
+        "- On a hard, well-defined task, **the cheapest baseline is "
+        "  `--candidate model@direct` with a small per-candidate budget**. "
+        "  The pipeline is worth its cost only when the model is strong "
+        "  enough to use the literature tools productively *within* the "
+        "  iteration cap.",
+        "- Reproducing the paper's specific picks (Nanvuranlat / KIRA6 / "
+        "  Leflunomide, or the broader 5) needs **more breadth** — the "
+        "  paper surfaced these after running 15 expert-curated goals + "
+        "  the full system's iterative refinement, not from a single "
+        "  Generation call.",
+        "- Budget caps matter. Tight per-candidate caps mask quality "
+        "  questions behind admission failures. For expensive models (Opus, "
+        "  o1) `--budget-per-candidate 2.0` is the floor on this prompt; "
+        "  `--n 5+` with multiple seeds is the floor for stable recall "
+        "  numbers.",
+        "",
+        "",
+    ])
+
+
 def _guess_preset(b: BenchRow) -> str:
     """Heuristic: derive a short preset label from goldset + candidate count."""
     goal = (b.research_goal or "").lower()
@@ -391,9 +472,13 @@ def build_report(db_path: Path, out_path: Path) -> None:
     sections = [
         "# Bench results",
         "",
-        f"Auto-generated from `{os.path.relpath(db_path, REPO_ROOT)}` by "
-        "`python scripts/build_bench_report.py`. Re-run after any new "
-        "`co-scientist bench` to refresh.",
+        "Live results from every cross-model bench run on this codebase. "
+        "See [`../README.md`](../README.md) for what the bench is and how to "
+        "run it; see [`DEVELOPMENT.md`](DEVELOPMENT.md) for the build history.",
+        "",
+        f"_Auto-generated from `{os.path.relpath(db_path, REPO_ROOT)}` by_ "
+        "_`python scripts/build_bench_report.py`._ "
+        "_Re-run after any new `co-scientist bench` to refresh._",
         "",
         "## How to read this doc",
         "",
@@ -415,6 +500,7 @@ def build_report(db_path: Path, out_path: Path) -> None:
         f"**With gold-set scoring:** "
         f"{sum(1 for b in benches if b.goldset_label)}",
         "",
+        _headline_findings_section(),
         _index_section(con, benches),
         "## Per-bench detail",
         "",
