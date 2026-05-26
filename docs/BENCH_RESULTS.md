@@ -1,6 +1,6 @@
 # Bench results
 
-Live results from every cross-model bench run on this codebase. See [`../README.md`](../README.md) for what the bench is and how to run it; see [`DEVELOPMENT.md`](DEVELOPMENT.md) for the build history.
+Live results from every cross-model bench run on this codebase. See [`../README.md`](../README.md) for what the bench is and how to run it.
 
 _Auto-generated from `data/co_scientist.db` by_ _`python scripts/build_bench_report.py`._ _Re-run after any new `co-scientist bench` to refresh._
 

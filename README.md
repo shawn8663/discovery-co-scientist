@@ -1,21 +1,27 @@
-# AI Co-Scientist
+# AI co-scientist
 
-A multi-agent system for tournament-style scientific hypothesis generation, ranking, and synthesis. Built on the architecture described in [`reference/`](reference/) (Google's Co-Scientist), implemented in Python on top of pluggable LLM provider SDKs.
+An open re-implementation of Google's **AI co-scientist** ([Gottweis et al., *Nature*, 2026](https://www.nature.com/articles/s41586-026-10644-y); [research blog, 2025](https://research.google/blog/accelerating-scientific-breakthroughs-with-an-ai-co-scientist/)) — a multi-agent system that takes a natural-language research goal and produces a tournament-ranked **research overview** of novel hypotheses.
 
-The system takes a natural-language research goal, runs six specialized LLM agents in a coordinated loop, and produces a *Research Overview* of the top-ranked hypotheses:
+The agent roster, prompts, and control flow follow the paper. Source materials shipped with the repo:
 
-- **Generation** — proposes hypotheses via literature review and simulated scientific debate
-- **Reflection** — reviews hypotheses for novelty, correctness, and testability; deep-verifies assumptions
-- **Ranking** — runs an Elo tournament with simulated debates between hypotheses
-- **Evolution** — combines, simplifies, and reimagines top-ranked hypotheses
-- **Proximity** — embeds and clusters hypotheses to drive dedup and informative pairings
-- **Meta-review** — synthesizes system-wide feedback and the final research overview
+- [`reference/8 Pseudocode of Co-Scientist agents`](reference/) — the supplementary pseudocode for Supervisor, Generation, Reflection, Ranking, Evolution, Proximity, Meta-review.
+- [`reference/9 Prompts for the specialized agents in .md`](reference/) — the per-agent prompts from the paper's supplement, used verbatim (modulo Jinja interpolation) in [`config/prompts/`](config/prompts/).
+- [`reference/AICoScientist-*.png`](reference/) — the architecture and component diagrams from the paper.
 
-A **Supervisor** schedules agents via a durable task queue (SQLite-backed) with bounded concurrency.
+The agents:
 
-> **Other docs**
-> - [`docs/BENCH_RESULTS.md`](docs/BENCH_RESULTS.md) — every cross-model bench ever run on this code, with per-candidate Elo, every hypothesis produced, gold-set hits, and direct file pointers. Auto-generated from the bench DB.
-> - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — milestone-by-milestone build history.
+- **Generation** — proposes hypotheses via literature review and simulated scientific debate.
+- **Reflection** — reviews hypotheses for novelty, correctness, and testability; deep-verifies the underlying assumptions.
+- **Ranking** — runs an Elo tournament with simulated debates between hypotheses.
+- **Evolution** — combines, simplifies, makes more feasible, or out-of-box-reimagines top-ranked hypotheses.
+- **Proximity** — embeds and clusters hypotheses to drive dedup and informative tournament pairings.
+- **Meta-review** — synthesizes system-wide feedback and the final research overview.
+
+A **Supervisor** parses the goal into a research plan and schedules agent tasks through a durable SQLite-backed queue with bounded concurrency.
+
+This is an independent re-implementation in Python on top of pluggable LLM provider SDKs — not affiliated with Google or the paper's authors.
+
+> [`docs/BENCH_RESULTS.md`](docs/BENCH_RESULTS.md) — every cross-model bench ever run on this code, with per-candidate Elo, every hypothesis produced, gold-set hits, and direct file pointers. Auto-generated from the bench DB.
 
 ## Contents
 
@@ -39,25 +45,26 @@ A **Supervisor** schedules agents via a durable task queue (SQLite-backed) with 
             │  • parse_goal → ResearchPlan         │  bounded concurrency
             │  • enqueue initial Generation tasks  │  lease + dead-letter + resume
             │  • main loop: claim → run → follow-up│  termination: BUDGET / WALL_CLOCK
-            │  • _decide_next_steps when idle      │              / ELO_STABLE / IDLE / EXTERNAL
-            │  • _finalize: meta-review final      │
+            │  • decide_next_steps when idle       │              / ELO_STABLE / IDLE / EXTERNAL
+            │  • finalize: meta-review overview    │
             └──────────────────────────────────────┘
                                   │  tasks
             ┌─────────────────────┼─────────────────────────────┐
             ▼                     ▼                             ▼
    ┌──────────────┐      ┌──────────────┐              ┌──────────────┐
-   │  Generation  │      │  Reflection  │              │   Ranking    │
-   │  literature  │      │  full / verif│              │ pairwise vs  │
-   │  +tool loop  │─►hyp│  +URL check  │─►review─►rank│   debate     │──►Elo
+   │  Generation  │ hyp  │  Reflection  │ review       │   Ranking    │
+   │  literature  │─────►│  full +      │─────────────►│ pairwise vs  │──► Elo
+   │  + debate    │      │  verification│              │   debate     │
    └──────────────┘      └──────────────┘              └──────────────┘
-            ▲                                                   │
-            │                                                   ▼
+            ▲                     ▲                             │
+            │                     │ informative pairings        ▼
    ┌──────────────┐      ┌──────────────┐              ┌──────────────┐
    │  Evolution   │◄─────│ Meta-review  │              │  Proximity   │
-   │ combine /    │ feed │ system fdbk  │              │ FAISS recluster│
-   │ simplify /   │ back │ final overview│             │ dedup + close│
-   │ out_of_box   │      └──────────────┘              │ Elo pairings │
-   └──────────────┘                                    └──────────────┘
+   │ combine /    │ feed │ system fdbk  │              │ FAISS embed  │
+   │ simplify /   │ back │ + final      │              │ + cluster /  │
+   │ feasibility /│      │ overview     │              │ dedup        │
+   │ out_of_box   │      └──────────────┘              └──────────────┘
+   └──────────────┘
             │
             ▼
        new hypotheses re-enter the cycle
@@ -67,16 +74,17 @@ A **Supervisor** schedules agents via a durable task queue (SQLite-backed) with 
   ─────────────────────
   • LLMProvider  ─ anthropic / openai / openrouter / gemini / groq /
                    together / mistral / ollama / openai_compatible
-  • ToolRegistry ─ web_fetch + pubmed/arxiv/europe_pmc;
+  • ToolRegistry ─ web_fetch + pubmed_search / arxiv_search / europe_pmc_search;
                    web_search auto-registered iff TAVILY/BRAVE key set;
-                   science-skills via SKILL.md frontmatter
+                   science-skills discovered via SKILL.md frontmatter
   • TokenBudget  ─ per-agent shares + global cap; reservation released on retry
   • EventBus     ─ in-memory fan-out to SSE for the live web UI
-  • FaissStore   ─ IndexFlatIP, asyncio-locked, atomic save/load;
+  • FaissStore   ─ IndexFlatIP per session, asyncio-locked, atomic save/load;
                    Voyage → OpenAI → hash-fallback embedder chain
-  • SQLite       ─ 15 tables incl. sessions / hypotheses / reviews / tasks /
-                   tournament_matches / transcripts / events / bench_*
-                   (WAL, busy_timeout, schema_migrations idempotent runner)
+  • SQLite       ─ sessions / hypotheses / reviews / tournament_matches /
+                   elo_journal / tasks / transcripts / system_feedback /
+                   embeddings_meta / spans / events / bench_* (15 tables;
+                   WAL, busy_timeout, idempotent migration runner)
 ```
 
 ## Install
@@ -115,6 +123,9 @@ co-scientist report <id>      # print the final overview
 co-scientist status <id>      # session metadata + counts
 co-scientist pause <id> | resume <id> | abort <id>
 co-scientist feedback <id> --kind directive --text "focus on metabolic pathways"
+co-scientist estimate         # pre-flight cost estimate; warns if > 1.2× budget
+co-scientist eval [agent]     # run the rubric eval bundle (offline mode optional)
+co-scientist tools list       # show every registered tool the agents can call
 ```
 
 ## LLM provider
@@ -262,29 +273,31 @@ The auto-generated [`docs/BENCH_RESULTS.md`](docs/BENCH_RESULTS.md) (rebuild wit
 
 ```
 co_scientist/
-  agents/       # supervisor + 6 specialized agents
-  bench/        # cross-model bench runner (compare via Elo tournament)
+  agents/       # supervisor + 6 specialized agents (base, generation, reflection,
+                # ranking, evolution, proximity, metareview)
+  bench/        # cross-model bench runner (Elo tournament + gold-set scoring)
   llm/          # provider abstraction (anthropic/openai/openrouter/gemini/...),
-                # tool loop, budgets, routing, retry
-  storage/      # SQLite schema + migrations, db connection, 15 repos
-  tools/        # tool registry; web/search, science-skills, code exec
-  vectors/      # embeddings (Voyage/OpenAI/hash-fallback) + FAISS index
-  orchestrator/ # task queue, worker pool, termination, event bus
+                # tool loop, token budgets, model routing, retry, batch, estimator
+  storage/      # SQLite schema + migrations, db connection, 10 repos
+  tools/        # tool registry; web_fetch, web_search, pubmed/arxiv/europe_pmc,
+                # science-skills bridge
+  vectors/      # embeddings (Voyage/OpenAI/hash-fallback) + FAISS IndexFlatIP
+  orchestrator/ # task scheduling, Elo updates, termination, event bus
   safety/       # injection quoting, classifier, citation verifier
-  obs/          # spans, metrics
+  obs/          # metrics (tokens, cost, cache hit ratio, latency)
   web/          # FastAPI + htmx + SSE UI + sanitized markdown renderer
   evals/        # per-agent + e2e + regression evals
   tests/        # 213 unit tests + fixtures + smoke
 config/
   default.toml
-  prompts/      # Jinja2 templates per agent.mode
+  prompts/      # 14 Jinja2 templates (one per agent.mode), derived from
+                # the paper's supplementary prompts
 docs/
   BENCH_RESULTS.md   # every bench ever run (auto-generated)
-  DEVELOPMENT.md     # milestone-by-milestone build history
 scripts/
   build_bench_report.py
-reference/      # input materials (pseudocode, prompts, diagrams)
-data/           # gitignored; runtime artifacts
+reference/      # paper source materials (pseudocode, prompts, diagrams)
+data/           # gitignored; runtime artifacts (SQLite, FAISS, transcripts)
 vendor/         # gitignored; pinned clone of google-deepmind/science-skills
 ```
 

@@ -474,7 +474,7 @@ def build_report(db_path: Path, out_path: Path) -> None:
         "",
         "Live results from every cross-model bench run on this codebase. "
         "See [`../README.md`](../README.md) for what the bench is and how to "
-        "run it; see [`DEVELOPMENT.md`](DEVELOPMENT.md) for the build history.",
+        "run it.",
         "",
         f"_Auto-generated from `{os.path.relpath(db_path, REPO_ROOT)}` by_ "
         "_`python scripts/build_bench_report.py`._ "
