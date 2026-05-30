@@ -24,6 +24,8 @@ from ..storage.repos import sessions as sess_repo
 from .base import BaseAgent
 from .schemas import RECORD_REVIEW_TOOL
 
+_LOW_PROMISE_SCREEN_VERDICTS = {"already_explained", "other_more_likely", "disproved"}
+
 
 class ReflectionAgent(BaseAgent):
     name = "reflection"
@@ -40,9 +42,6 @@ class ReflectionAgent(BaseAgent):
         h = await hyp_repo.fetch(self.deps.db, hypothesis_id)
         if h is None:
             raise RuntimeError(f"hypothesis {hypothesis_id} missing")
-
-        if kind != "full":
-            raise NotImplementedError(f"reflection kind {kind!r} lands in a later milestone")
 
         if h.state == "draft":
             canonical = await hyp_repo.active_cluster_canonical(self.deps.db, h)
@@ -72,6 +71,11 @@ class ReflectionAgent(BaseAgent):
                         "dedup_cluster": h.dedup_cluster,
                     },
                 )
+
+        if kind == "screen":
+            return await self._run_screen(task, session, h)
+        if kind != "full":
+            raise NotImplementedError(f"reflection kind {kind!r} lands in a later milestone")
 
         prompt = render(
             "reflection.full",
@@ -173,7 +177,83 @@ class ReflectionAgent(BaseAgent):
             kind="review_completed",
             review_ids=[review_id],
             hypothesis_ids=[h.id],
-            extra={"verdict": record.get("verdict")},
+            extra={"kind": "full", "verdict": record.get("verdict")},
+        )
+
+    async def _run_screen(self, task: Task, session, h) -> TaskResult:
+        prompt = render(
+            "reflection.screen",
+            goal=session.research_plan.objective,
+            preferences="; ".join(session.research_plan.preferences),
+            hypothesis_id=h.id,
+            hypothesis_text=quote_hypothesis(h.full_text, id_=h.id),
+        )
+        sys_blocks = [
+            CachedBlock(self._system_prompt_header(), cache=True),
+            CachedBlock(
+                f"# Research goal\n{session.research_goal}\n\n"
+                f"# Preferences\n{'; '.join(session.research_plan.preferences)}",
+                cache=True,
+            ),
+        ]
+        spec = AgentCallSpec(
+            route=route(self.deps.cfg, "reflection", "screen"),
+            system_blocks=sys_blocks,
+            user_blocks=[CachedBlock(prompt, cache=False)],
+            tools=[RECORD_REVIEW_TOOL],
+            tool_choice={"type": "tool", "name": "record_review"},
+            max_output_tokens=2048,
+        )
+        ctx = CallContext(
+            session_id=task.session_id,
+            task_id=task.id,
+            agent="reflection",
+            action="ReviewHypothesis",
+            mode="screen",
+        )
+        resp = await self.deps.llm.call(spec, ctx)
+        record = self._final_tool_use(resp, "record_review")
+        if record is None:
+            raise RuntimeError("Screen reflection did not call record_review")
+        record["kind"] = "screen"
+        record["evidence"] = []
+        promising = _screen_is_promising(record)
+
+        review_id = ids.review_id(h.id, "screen", iteration=0)
+        artifact_path = await write_json(
+            self.deps.cfg, session.id, "reviews", review_id,
+            {"hypothesis_id": h.id, "record": record},
+        )
+        review = Review(
+            id=review_id,
+            hypothesis_id=h.id,
+            session_id=session.id,
+            created_at=datetime.now(UTC),
+            kind="screen",
+            verdict=record.get("verdict"),       # type: ignore[arg-type]
+            scores=ReviewScores(
+                novelty=record.get("novelty"),
+                correctness=record.get("correctness"),
+                testability=record.get("testability"),
+                feasibility=record.get("feasibility"),
+            ),
+            body=_render_review_md(record),
+            artifact_path=artifact_path,
+        )
+        await rev_repo.insert(self.deps.db, review)
+        if not promising:
+            await hyp_repo.set_state_if(
+                self.deps.db, h.id, new_state="rejected", expected_states=("draft",),
+            )
+        return TaskResult(
+            kind="review_completed",
+            review_ids=[review_id],
+            hypothesis_ids=[h.id],
+            extra={
+                "kind": "screen",
+                "verdict": record.get("verdict"),
+                "promising": promising,
+            },
         )
 
 
@@ -201,3 +281,10 @@ def _render_review_md(record: dict[str, Any]) -> str:
     if record.get("notes"):
         parts.append(f"## Notes\n{record['notes']}")
     return "\n\n".join(parts)
+
+
+def _screen_is_promising(record: dict[str, Any]) -> bool:
+    verdict = record.get("verdict")
+    if verdict in _LOW_PROMISE_SCREEN_VERDICTS:
+        return False
+    return verdict in {"missing_piece", "neutral"}

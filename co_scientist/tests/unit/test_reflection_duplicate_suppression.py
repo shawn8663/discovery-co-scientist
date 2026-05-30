@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from co_scientist import ids
 from co_scientist.agents.base import AgentDeps
 from co_scientist.agents.reflection import ReflectionAgent
+from co_scientist.agents.schemas import RECORD_REVIEW_TOOL
+from co_scientist.llm.anthropic_client import AnthropicResponse
 from co_scientist.models import Hypothesis, ResearchPlan, Session, Task
 from co_scientist.storage.repos import hypotheses as hyp_repo
 from co_scientist.storage.repos import reviews as rev_repo
@@ -109,3 +113,81 @@ async def test_reflection_retires_later_duplicate_draft_before_llm(tmp_cfg, conn
     assert duplicate is not None
     assert duplicate.state == "retired"
     assert await rev_repo.list_for_hypothesis(conn, duplicate_id) == []
+
+
+@pytest.mark.asyncio
+async def test_screen_reflection_uses_no_retrieval_tools_and_rejects_low_promise(
+    tmp_cfg, conn
+) -> None:
+    session = await _make_session(conn)
+    hypothesis_id = ids.hypothesis_id(session.id, "generation/literature", "low promise")
+    await _insert_hypothesis(
+        conn,
+        session.id,
+        hid=hypothesis_id,
+        created_at=_now(),
+        cluster="screen-low",
+    )
+    raw = SimpleNamespace(
+        content=[
+            SimpleNamespace(
+                type="tool_use",
+                name="record_review",
+                input={
+                    "kind": "screen",
+                    "verdict": "already_explained",
+                    "novelty": 0.1,
+                    "correctness": 0.8,
+                    "testability": 0.4,
+                    "feasibility": 0.8,
+                    "evidence": [],
+                    "notes": "Known mechanism; skip expensive review.",
+                },
+            )
+        ],
+    )
+    response = AnthropicResponse(
+        raw=raw,
+        transcript_id="trn_screen_low",
+        cost_usd=0.001,
+        input_tokens=200,
+        output_tokens=80,
+        cache_read=0,
+        cache_write=0,
+    )
+    deps = AgentDeps(
+        cfg=tmp_cfg,
+        db=conn,
+        llm=MagicMock(call=AsyncMock(return_value=response)),
+        tools=MagicMock(),
+    )
+    deps.tools.anthropic_tools_for.side_effect = AssertionError(
+        "screen reflection must not request retrieval tools"
+    )
+
+    result = await ReflectionAgent(deps).execute(
+        Task(
+            id=ids.task_id(),
+            session_id=session.id,
+            created_at=_now(),
+            agent="reflection",
+            action="ReviewHypothesis",
+            target_id=hypothesis_id,
+            payload={"kind": "screen"},
+        )
+    )
+
+    assert result.kind == "review_completed"
+    assert result.extra == {
+        "kind": "screen",
+        "verdict": "already_explained",
+        "promising": False,
+    }
+    spec = deps.llm.call.await_args.args[0]
+    assert spec.tools == [RECORD_REVIEW_TOOL]
+    assert spec.tool_choice == {"type": "tool", "name": "record_review"}
+    hypothesis = await hyp_repo.fetch(conn, hypothesis_id)
+    assert hypothesis is not None
+    assert hypothesis.state == "rejected"
+    reviews = await rev_repo.list_for_hypothesis(conn, hypothesis_id)
+    assert [r.kind for r in reviews] == ["screen"]

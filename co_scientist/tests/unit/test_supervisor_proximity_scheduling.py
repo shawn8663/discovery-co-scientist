@@ -94,6 +94,79 @@ async def test_hypothesis_created_schedules_proximity_before_reflection(tmp_cfg,
     assert proximity["idempotency_key"] == f"{session.id}::proximity::pre_reflection::3"
     assert reflection["action"] == "ReviewHypothesis"
     assert reflection["target_id"] == new_id
+    assert json.loads(reflection["payload"]) == {"kind": "screen"}
+    assert reflection["idempotency_key"] == f"{new_id}::review::screen"
+
+
+@pytest.mark.asyncio
+async def test_promising_screen_review_schedules_full_reflection(tmp_cfg, conn) -> None:
+    session = await _make_session(conn)
+    hypothesis_id = await _insert_hypothesis(conn, session.id, 0)
+
+    await Supervisor(tmp_cfg)._apply_follow_ups(
+        conn,
+        session,
+        Task(
+            id=ids.task_id(),
+            session_id=session.id,
+            created_at=_now(),
+            agent="reflection",
+            action="ReviewHypothesis",
+            target_id=hypothesis_id,
+            payload={"kind": "screen"},
+        ),
+        TaskResult(
+            kind="review_completed",
+            hypothesis_ids=[hypothesis_id],
+            extra={"kind": "screen", "promising": True},
+        ),
+    )
+
+    async with conn.execute(
+        "SELECT agent, action, target_id, payload, idempotency_key "
+        "FROM tasks WHERE session_id=?",
+        (session.id,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    assert row["agent"] == "reflection"
+    assert row["action"] == "ReviewHypothesis"
+    assert row["target_id"] == hypothesis_id
+    assert json.loads(row["payload"]) == {"kind": "full"}
+    assert row["idempotency_key"] == f"{hypothesis_id}::review::full"
+
+
+@pytest.mark.asyncio
+async def test_low_promise_screen_review_skips_full_reflection(tmp_cfg, conn) -> None:
+    session = await _make_session(conn)
+    hypothesis_id = await _insert_hypothesis(conn, session.id, 0)
+
+    await Supervisor(tmp_cfg)._apply_follow_ups(
+        conn,
+        session,
+        Task(
+            id=ids.task_id(),
+            session_id=session.id,
+            created_at=_now(),
+            agent="reflection",
+            action="ReviewHypothesis",
+            target_id=hypothesis_id,
+            payload={"kind": "screen"},
+        ),
+        TaskResult(
+            kind="review_completed",
+            hypothesis_ids=[hypothesis_id],
+            extra={"kind": "screen", "promising": False},
+        ),
+    )
+
+    async with conn.execute(
+        "SELECT COUNT(*) AS n FROM tasks WHERE session_id=?",
+        (session.id,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    assert row["n"] == 0
 
 
 @pytest.mark.asyncio

@@ -138,6 +138,7 @@ def thinking_budget_for(cfg: Config, mode: str) -> int:
     return {
         "generation.literature":   th.generation_literature,
         "generation.debate":       th.generation_debate,
+        "reflection.screen":       0,
         "reflection.full":         th.reflection_full,
         "reflection.verification": th.reflection_verification,
         "reflection.observation":  th.reflection_observation,
@@ -158,6 +159,7 @@ def route(cfg: Config, agent: str, mode: str | None = None, *, degraded: bool = 
     model = {
         ("generation", "literature"):  m.generation,
         ("generation", "debate"):      m.generation,
+        ("reflection", "screen"):      m.reflection,
         ("reflection", "full"):        m.reflection,
         ("reflection", "verification"):m.reflection,
         ("reflection", "observation"): m.reflection,

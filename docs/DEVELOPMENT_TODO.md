@@ -45,7 +45,7 @@ before broadening the executable scientific skill surface.
   - Prefer cross-cluster comparisons for low-match hypotheses.
   - Add regression tests for same-cluster avoidance and fallback behavior.
 
-- [ ] Add cheap first-pass Reflection.
+- [x] Add cheap first-pass Reflection.
   - Introduce a lightweight review mode before retrieval-heavy full review.
   - Promote only promising hypotheses to full Reflection.
   - Add tests proving low-promise hypotheses skip expensive retrieval tools.
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with cheap first-pass Reflection, because cross-cluster tournament
-selection now reduces wasted comparisons and the next largest cost lever is
-skipping expensive retrieval-heavy reviews for weak hypotheses.
+Continue with Ranking prompt compression, because cheap Reflection now avoids
+some expensive reviews and the next cost lever is reducing prompt volume for
+the tournament comparisons that remain.

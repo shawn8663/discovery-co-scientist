@@ -415,11 +415,24 @@ class Supervisor:
                     id=ids.task_id(), session_id=session.id,
                     created_at=datetime.now(UTC),
                     agent="reflection", action="ReviewHypothesis",
-                    target_id=hid, payload={"kind": "full"},
+                    target_id=hid, payload={"kind": "screen"},
                     priority=100, status="pending",
-                    idempotency_key=f"{hid}::review::full",
+                    idempotency_key=f"{hid}::review::screen",
                 ))
         elif result.kind == "review_completed":
+            review_kind = result.extra.get("kind") or task.payload.get("kind")
+            if review_kind == "screen":
+                if result.extra.get("promising") is True:
+                    for hid in result.hypothesis_ids:
+                        await task_repo.enqueue(conn, Task(
+                            id=ids.task_id(), session_id=session.id,
+                            created_at=datetime.now(UTC),
+                            agent="reflection", action="ReviewHypothesis",
+                            target_id=hid, payload={"kind": "full"},
+                            priority=100, status="pending",
+                            idempotency_key=f"{hid}::review::full",
+                        ))
+                return
             for hid in result.hypothesis_ids:
                 await task_repo.enqueue(conn, Task(
                     id=ids.task_id(), session_id=session.id,

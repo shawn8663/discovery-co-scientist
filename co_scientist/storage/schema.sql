@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     hypothesis_id   TEXT NOT NULL REFERENCES hypotheses(id) ON DELETE CASCADE,
     session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     created_at      TEXT NOT NULL,
-    kind            TEXT NOT NULL,                     -- full|verification|observation|simulation
+    kind            TEXT NOT NULL,                     -- screen|full|verification|observation|simulation
     verdict         TEXT,                              -- already_explained|other_more_likely|missing_piece|neutral|disproved
     novelty         REAL,
     correctness     REAL,

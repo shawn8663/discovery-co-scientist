@@ -89,7 +89,7 @@ RECORD_REVIEW_TOOL: dict[str, Any] = {
             },
             "kind": {
                 "type": "string",
-                "enum": ["full", "verification", "observation", "simulation"],
+                "enum": ["screen", "full", "verification", "observation", "simulation"],
                 "description": "Which review mode you ran.",
             },
             "novelty":     {"type": "number", "minimum": 0, "maximum": 1},
