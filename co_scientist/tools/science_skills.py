@@ -22,6 +22,7 @@ agent's tool-call args are forwarded verbatim.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -233,6 +234,19 @@ class ScienceSkillTool:
             )
 
         env = _sanitized_env(self._cfg, self.meta.requires_keys or [])
+        input_hash = _input_hash(args)
+        cached = _read_skill_cache(self._cfg, self.meta.name, input_hash)
+        if cached is not None:
+            return ToolResult(
+                content=cached["content"],
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                result_bytes=len(json.dumps(cached["content"], default=str)),
+                metadata={
+                    "cached": True,
+                    "resumed_from_run_id": cached.get("run_id"),
+                    "input_hash": input_hash,
+                },
+            )
         # cwd: per-call tmp under data/tool_runs/<skill>/<run_id>
         cwd = self._cfg.data_dir / "tool_runs" / self.meta.name / run_id
         cwd.mkdir(parents=True, exist_ok=True)
@@ -338,6 +352,30 @@ class ScienceSkillTool:
         if ctx.session_id is not None:
             from ..workspace import ScientistWorkspace
 
+            if self.meta.category == "analysis":
+                ScientistWorkspace(self._cfg, ctx.session_id).add_artifact(
+                    kind="analysis",
+                    path=cwd,
+                    title=f"{self.meta.name} analysis",
+                    provenance=manifest,
+                    metadata={
+                        "expected_outputs": self.meta.expected_outputs,
+                        "stdout_bytes": len(stdout_text),
+                        "stderr_bytes": len(stderr_text),
+                        "returncode": rc,
+                    },
+                )
+            elif self.meta.category == "drafting":
+                ScientistWorkspace(self._cfg, ctx.session_id).add_artifact(
+                    kind="draft",
+                    path=cwd,
+                    title=f"{self.meta.name} draft",
+                    provenance=manifest,
+                    metadata={
+                        "expected_outputs": self.meta.expected_outputs,
+                        "returncode": rc,
+                    },
+                )
             ScientistWorkspace(self._cfg, ctx.session_id).add_artifact(
                 kind="tool_run",
                 path=cwd,
@@ -349,6 +387,12 @@ class ScienceSkillTool:
                     "returncode": rc,
                 },
             )
+        _write_skill_cache(
+            self._cfg,
+            self.meta.name,
+            input_hash,
+            {"run_id": run_id, "content": out_content},
+        )
         return ToolResult(
             content=out_content,
             duration_ms=int((time.monotonic() - t0) * 1000),
@@ -395,6 +439,33 @@ def _missing_required_secrets(cfg: Config, required: list[str]) -> list[str]:
             continue
         missing.append(name)
     return missing
+
+
+def _input_hash(args: dict[str, Any]) -> str:
+    payload = json.dumps(args, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _skill_cache_path(cfg: Config, skill_name: str, input_hash: str) -> Path:
+    return cfg.data_dir / "tool_runs" / skill_name / "cache" / f"{input_hash}.json"
+
+
+def _read_skill_cache(cfg: Config, skill_name: str, input_hash: str) -> dict[str, Any] | None:
+    path = _skill_cache_path(cfg, skill_name, input_hash)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+
+
+def _write_skill_cache(cfg: Config, skill_name: str, input_hash: str, payload: dict[str, Any]) -> None:
+    path = _skill_cache_path(cfg, skill_name, input_hash)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n")
+    tmp.replace(path)
 
 
 def _string_list(value: Any) -> list[str]:

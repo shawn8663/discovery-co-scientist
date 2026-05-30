@@ -76,6 +76,7 @@ class PubmedSearchTool:
             content=payload,
             duration_ms=int((time.monotonic() - t0) * 1000),
             result_bytes=len(str(payload)),
+            metadata={"retrieval_source": self.name},
         )
 
     async def _esearch(

@@ -93,3 +93,66 @@ async def test_overview_shows_withheld_safety_status_and_artifact_link(tmp_cfg, 
     )
     assert artifact_response.status_code == 200
     assert artifact_response.json()["safety_rationale"] == "Needs a human safety review."
+
+
+async def test_project_file_upload_registers_and_indexes_pdf(tmp_cfg, conn) -> None:
+    session = Session(
+        id="ses_web_upload",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        status="running",
+        research_goal="Find a safer assay design.",
+        research_plan=ResearchPlan(objective="Find a safer assay design."),
+        config_snapshot={},
+        budget_tokens=1000,
+        budget_usd=1.0,
+    )
+    await sess_repo.insert(conn, session)
+
+    response = TestClient(create_app(tmp_cfg)).post(
+        f"/api/sessions/{session.id}/workspace/upload",
+        files={"file": ("paper.pdf", _minimal_pdf_bytes("KIRA6 IRE1 alpha"), "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["artifact"]["kind"] == "project_file"
+    assert payload["artifact"]["title"] == "paper.pdf"
+    assert payload["indexed"] is True
+    assert (tmp_cfg.data_dir / "cache" / "local_pdfs").exists()
+
+    detail = TestClient(create_app(tmp_cfg)).get(f"/sessions/{session.id}")
+    assert "paper.pdf" in detail.text
+
+
+def _minimal_pdf_bytes(text: str) -> bytes:
+    escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    stream = f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+    body = b"%PDF-1.4\n"
+    offsets = [0]
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(len(body))
+        body += f"{i} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref_start = len(body)
+    body += f"xref\n0 {len(objects) + 1}\n".encode()
+    body += b"0000000000 65535 f \n"
+    for offset in offsets[1:]:
+        body += f"{offset:010d} 00000 n \n".encode()
+    body += (
+        b"trailer\n"
+        + f"<< /Size {len(objects) + 1} /Root 1 0 R >>\n".encode()
+        + b"startxref\n"
+        + str(xref_start).encode()
+        + b"\n%%EOF\n"
+    )
+    return body

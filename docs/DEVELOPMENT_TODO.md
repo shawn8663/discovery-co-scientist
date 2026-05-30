@@ -100,49 +100,48 @@ before broadening the executable scientific skill surface.
 
 ## P2: Augmented Scientist Workspace
 
-- [ ] Add project file upload/index workflow.
+- [x] Add project file upload/index workflow.
   - Register uploaded PDFs, notes, and datasets as workspace artifacts.
   - Trigger local indexing for supported file types.
   - Add UI tests for upload and artifact registration.
 
-- [ ] Add retrieved-literature workspace artifacts.
+- [x] Add retrieved-literature workspace artifacts.
   - Save PubMed, Europe PMC, arXiv, OpenAlex, ClinicalTrials, and local-PDF
     search results as `retrieved_literature` artifacts.
   - Store source, query, cache key, and citation metadata.
 
-- [ ] Add citation graph and claims table artifacts.
+- [x] Add citation graph and claims table artifacts.
   - Extract claim-to-source mappings from reviews and final overviews.
   - Store structured `citation` artifacts for later drafting.
 
-- [ ] Add analysis artifact workflow.
+- [x] Add analysis artifact workflow.
   - Capture skill stdout, stderr, figures, notebooks, result tables, and logs.
   - Make analysis artifacts discoverable from the session UI.
 
-- [ ] Add publication drafting artifacts.
+- [x] Add publication drafting artifacts.
   - Generate outline, claims table, manuscript sections, figures list, and
     reviewer-response drafts.
   - Preserve citations and provenance for each drafted claim.
 
 ## P2: Curated Scientific Skill Packs
 
-- [ ] Add retrieval skill adapters.
+- [x] Add retrieval skill adapters.
   - Prioritize PubMed, Europe PMC, arXiv, OpenAlex, ClinicalTrials, UniProt,
     PubChem, ChEMBL, OpenTargets, and local PDFs.
 
-- [ ] Add analysis skill adapters.
+- [x] Add analysis skill adapters.
   - Start with vetted Python workflows for tabular analysis, statistics,
     exploratory data analysis, and publication figures.
 
-- [ ] Add drafting skill adapters.
+- [x] Add drafting skill adapters.
   - Add structured manuscript section generation, abstract drafting, claims
     tables, citation maps, and reviewer-response drafts.
 
-- [ ] Add resumable skill-run support.
+- [x] Add resumable skill-run support.
   - Reuse existing artifacts when the same skill input hash has already run.
   - Add tests for failed, timed-out, resumed, and cached skill runs.
 
 ## Suggested Next Implementation Slice
 
-Continue with the augmented workspace items, because P1 paper fidelity and
-benchmark reporting are now covered and the remaining tasks build the
-researcher-facing artifact workflow.
+All listed development roadmap items are implemented. Run the full test suite
+and final review before preparing the local commit stack for contribution.

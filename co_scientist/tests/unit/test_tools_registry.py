@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from textwrap import dedent
+from typing import ClassVar
 
 import pytest
 
@@ -15,6 +16,7 @@ from co_scientist.tools.science_skills import (
     discover_skills,
     parse_skill_md,
 )
+from co_scientist.workspace import ScientistWorkspace
 
 
 def test_registry_discovers_builtins(tmp_cfg) -> None:
@@ -301,3 +303,188 @@ async def test_science_skill_missing_declared_secret_fails_before_execution(
     assert result.is_error is True
     assert result.content == {"missing_required_secrets": ["CO_SCIENTIST_TEST_MISSING_KEY"]}
     assert not marker.exists()
+
+
+@pytest.mark.asyncio
+async def test_retrieval_tool_call_saves_literature_workspace_artifact(tmp_cfg) -> None:
+    class FakeRetrievalTool:
+        name = "pubmed_search"
+        description = "fake retrieval"
+        input_schema: ClassVar[dict] = {"type": "object", "properties": {}}
+
+        async def call(self, args, ctx):
+            from co_scientist.tools.base import ToolResult
+
+            return ToolResult(
+                content={
+                    "query": args["query"],
+                    "n": 1,
+                    "results": [
+                        {
+                            "title": "Paper title",
+                            "url": "https://example.test/paper",
+                            "doi": "10.123/example",
+                            "year": 2024,
+                        }
+                    ],
+                },
+                metadata={"retrieval_source": self.name, "cache_hit": False},
+            )
+
+    registry = ToolRegistry(tmp_cfg)
+    registry._register(FakeRetrievalTool())
+
+    result = await registry.call(
+        "pubmed_search",
+        {"query": "AML LAT1"},
+        ToolCtx(cfg=tmp_cfg, session_id="ses_lit", run_id="run_lit"),
+    )
+
+    assert result.is_error is False
+    artifacts = ScientistWorkspace(tmp_cfg, "ses_lit").list()
+    [artifact] = [a for a in artifacts if a.kind == "retrieved_literature"]
+    assert artifact.metadata["source"] == "pubmed_search"
+    assert artifact.metadata["query"] == "AML LAT1"
+    assert artifact.metadata["cache_hit"] is False
+    assert artifact.metadata["citation_metadata"] == [
+        {
+            "title": "Paper title",
+            "url": "https://example.test/paper",
+            "doi": "10.123/example",
+            "year": 2024,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_analysis_and_drafting_skills_create_workspace_artifacts(tmp_path: Path, tmp_cfg) -> None:
+    for category, expected_kind in (("analysis", "analysis"), ("drafting", "draft")):
+        sk = tmp_path / category
+        (sk / "scripts").mkdir(parents=True)
+        (sk / "SKILL.md").write_text(
+            dedent(
+                f"""\
+                ---
+                name: {category}_skill
+                description: Emits JSON
+                category: {category}
+                entrypoint: scripts/run.py
+                expected_outputs: ["json"]
+                ---
+                """
+            )
+        )
+        (sk / "scripts" / "run.py").write_text("print('{\"ok\": true}')\n")
+        meta = parse_skill_md(sk)
+        assert meta is not None
+
+        result = await ScienceSkillTool(tmp_cfg, meta).call(
+            {"args": {"category": category}},
+            ToolCtx(cfg=tmp_cfg, session_id=f"ses_{category}", run_id=f"run_{category}"),
+        )
+
+        assert result.is_error is False
+        artifacts = ScientistWorkspace(tmp_cfg, f"ses_{category}").list()
+        assert any(a.kind == expected_kind for a in artifacts)
+        assert any(a.kind == "tool_run" for a in artifacts)
+
+
+@pytest.mark.asyncio
+async def test_science_skill_reuses_cached_successful_run(tmp_path: Path, tmp_cfg) -> None:
+    sk = tmp_path / "cached"
+    (sk / "scripts").mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        dedent(
+            """\
+            ---
+            name: cached_skill
+            description: Emits JSON
+            category: analysis
+            entrypoint: scripts/run.py
+            ---
+            """
+        )
+    )
+    counter = tmp_path / "counter.txt"
+    (sk / "scripts" / "run.py").write_text(
+        "import json\n"
+        f"from pathlib import Path\np=Path({str(counter)!r})\n"
+        "n=int(p.read_text() or '0') if p.exists() else 0\n"
+        "p.write_text(str(n+1))\n"
+        "print(json.dumps({'count': n+1}))\n"
+    )
+    meta = parse_skill_md(sk)
+    assert meta is not None
+    tool = ScienceSkillTool(tmp_cfg, meta)
+
+    first = await tool.call({"args": {"x": 1}}, ToolCtx(cfg=tmp_cfg, run_id="run_first"))
+    second = await tool.call({"args": {"x": 1}}, ToolCtx(cfg=tmp_cfg, run_id="run_second"))
+
+    assert first.content["result"] == {"count": 1}
+    assert second.content["result"] == {"count": 1}
+    assert second.metadata["cached"] is True
+    assert second.metadata["resumed_from_run_id"] == "run_first"
+    assert counter.read_text() == "1"
+
+
+@pytest.mark.asyncio
+async def test_science_skill_does_not_cache_failed_runs(tmp_path: Path, tmp_cfg) -> None:
+    sk = tmp_path / "failed"
+    (sk / "scripts").mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        dedent(
+            """\
+            ---
+            name: failed_skill
+            description: Fails
+            entrypoint: scripts/run.py
+            ---
+            """
+        )
+    )
+    counter = tmp_path / "failed_counter.txt"
+    (sk / "scripts" / "run.py").write_text(
+        f"from pathlib import Path\np=Path({str(counter)!r})\n"
+        "n=int(p.read_text() or '0') if p.exists() else 0\n"
+        "p.write_text(str(n+1))\n"
+        "raise SystemExit(2)\n"
+    )
+    meta = parse_skill_md(sk)
+    assert meta is not None
+    tool = ScienceSkillTool(tmp_cfg, meta)
+
+    first = await tool.call({"args": {"x": 1}}, ToolCtx(cfg=tmp_cfg, run_id="run_fail_1"))
+    second = await tool.call({"args": {"x": 1}}, ToolCtx(cfg=tmp_cfg, run_id="run_fail_2"))
+
+    assert first.is_error is True
+    assert second.is_error is True
+    assert "cached" not in second.metadata
+    assert counter.read_text() == "2"
+
+
+@pytest.mark.asyncio
+async def test_science_skill_does_not_cache_timed_out_runs(tmp_path: Path, tmp_cfg) -> None:
+    sk = tmp_path / "timeout"
+    (sk / "scripts").mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        dedent(
+            """\
+            ---
+            name: timeout_skill
+            description: Times out
+            entrypoint: scripts/run.py
+            timeout_seconds: 1
+            ---
+            """
+        )
+    )
+    (sk / "scripts" / "run.py").write_text("import time\ntime.sleep(5)\nprint('{}')\n")
+    meta = parse_skill_md(sk)
+    assert meta is not None
+    tool = ScienceSkillTool(tmp_cfg, meta)
+
+    result = await tool.call({"args": {"x": 1}}, ToolCtx(cfg=tmp_cfg, run_id="run_timeout"))
+
+    assert result.is_error is True
+    assert "timeout" in (result.error_message or "")
+    assert "cached" not in result.metadata

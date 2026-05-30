@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -38,12 +38,14 @@ from ..storage.repos import hypotheses as hyp_repo
 from ..storage.repos import reviews as rev_repo
 from ..storage.repos import sessions as sess_repo
 from ..storage.repos import transcripts as tx_repo
+from ..tools.local_pdf_search import _looks_like_pdf, _read_or_index_pdf
 from ..workspace import ScientistWorkspace
 from .sanitize import render_markdown
 
 log = get_logger("web")
 HERE = Path(__file__).parent
 TEMPLATES = Jinja2Templates(directory=HERE / "templates")
+UPLOAD_FILE_PARAM = File(...)
 
 
 def create_app(cfg: Config | None = None) -> FastAPI:
@@ -307,6 +309,50 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             return JSONResponse({"ok": True, "feedback_id": fb.id})
         finally:
             await conn.close()
+
+    @app.post("/api/sessions/{session_id}/workspace/upload")
+    async def api_workspace_upload(
+        session_id: str,
+        file: UploadFile = UPLOAD_FILE_PARAM,
+    ) -> JSONResponse:
+        conn = await db_mod.connect(cfg)
+        try:
+            session = await sess_repo.fetch(conn, session_id)
+            if session is None:
+                raise HTTPException(status_code=404, detail="session not found")
+        finally:
+            await conn.close()
+
+        workspace = ScientistWorkspace(cfg, session_id)
+        workspace.ensure()
+        filename = Path(file.filename or "upload.bin").name
+        dest = workspace.root / "uploads" / filename
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        data = await file.read()
+        dest.write_bytes(data)
+        artifact = workspace.add_artifact(
+            kind="project_file",
+            path=dest,
+            title=filename,
+            provenance={"source": "web_upload"},
+            metadata={
+                "content_type": file.content_type or "application/octet-stream",
+                "size_bytes": len(data),
+            },
+        )
+        indexed = False
+        parse_error = ""
+        if _looks_like_pdf(artifact):
+            try:
+                _read_or_index_pdf(cfg, artifact, dest)
+                indexed = True
+            except Exception as e:
+                parse_error = str(e)
+        return JSONResponse({
+            "artifact": artifact.model_dump(mode="json"),
+            "indexed": indexed,
+            "parse_error": parse_error,
+        })
 
     @app.get("/healthz")
     async def health() -> JSONResponse:

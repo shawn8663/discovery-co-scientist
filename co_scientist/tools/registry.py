@@ -6,9 +6,12 @@ restrict what the LLM sees per call (smaller tool list = better tool-use quality
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from ..config import Config
+from ..ids import artifact_id
+from ..workspace import ScientistWorkspace
 from .base import Tool, ToolCtx, ToolResult, to_anthropic_tool
 from .builtins.arxiv import ArxivSearchTool
 from .builtins.clinical_trials import ClinicalTrialsSearchTool
@@ -120,7 +123,10 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(is_error=True, error_message=f"unknown tool: {name}")
-        return await tool.call(args, ctx)
+        result = await tool.call(args, ctx)
+        if not result.is_error:
+            _save_retrieved_literature_artifact(self._cfg, name, args, ctx, result)
+        return result
 
     def summary(self) -> list[dict[str, Any]]:
         """Used by `co-scientist tools list` and the UI."""
@@ -128,3 +134,63 @@ class ToolRegistry:
             {"name": t.name, "description": t.description[:200]}
             for t in sorted(self._tools.values(), key=lambda x: x.name)
         ]
+
+
+def _save_retrieved_literature_artifact(
+    cfg: Config,
+    tool_name: str,
+    args: dict[str, Any],
+    ctx: ToolCtx,
+    result: ToolResult,
+) -> None:
+    source = result.metadata.get("retrieval_source")
+    if not source or ctx.session_id is None:
+        return
+    workspace = ScientistWorkspace(cfg, ctx.session_id)
+    workspace.ensure()
+    run_id = ctx.run_id or artifact_id()
+    path = workspace.root / "retrieved_literature" / f"{tool_name}_{run_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "tool": tool_name,
+        "args": args,
+        "content": result.content,
+        "metadata": result.metadata,
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n")
+    query = args.get("query") or (
+        result.content.get("query") if isinstance(result.content, dict) else None
+    )
+    workspace.add_artifact(
+        kind="retrieved_literature",
+        path=path,
+        title=f"{source}: {query or run_id}",
+        provenance={"tool": tool_name, "run_id": run_id},
+        metadata={
+            "source": source,
+            "query": query,
+            "cache_hit": result.metadata.get("cache_hit"),
+            "cache_key_args": args,
+            "citation_metadata": _citation_metadata(result.content),
+        },
+    )
+
+
+def _citation_metadata(content: Any) -> list[dict[str, Any]]:
+    if not isinstance(content, dict):
+        return []
+    records = content.get("results")
+    if not isinstance(records, list):
+        return []
+    citations: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        item = {
+            key: record.get(key)
+            for key in ("title", "url", "doi", "year", "pmid", "nct_id", "id")
+            if record.get(key)
+        }
+        if item:
+            citations.append(item)
+    return citations
