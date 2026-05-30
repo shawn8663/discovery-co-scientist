@@ -91,7 +91,11 @@ class ScientistWorkspace:
         p = Path(path)
         if p.is_absolute():
             return str(p)
-        return str((self.root / p).resolve())
+        root = self.root.resolve()
+        resolved = (root / p).resolve()
+        if not resolved.is_relative_to(root):
+            raise ValueError("relative workspace artifact paths must stay inside the workspace")
+        return str(resolved)
 
     def _write(self, artifacts: list[WorkspaceArtifact]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)

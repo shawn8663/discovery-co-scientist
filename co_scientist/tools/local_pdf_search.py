@@ -48,11 +48,16 @@ class LocalPDFSearchTool:
         results: list[dict[str, Any]] = []
         cache_hits = 0
         cache_misses = 0
+        parse_errors = 0
         for artifact in artifacts:
             path = Path(artifact.path)
             if not path.is_file():
                 continue
-            indexed, cache_hit = _read_or_index_pdf(self._cfg, artifact, path)
+            try:
+                indexed, cache_hit = _read_or_index_pdf(self._cfg, artifact, path)
+            except Exception:
+                parse_errors += 1
+                continue
             if cache_hit:
                 cache_hits += 1
             else:
@@ -82,6 +87,7 @@ class LocalPDFSearchTool:
                 "cache_hit": cache_misses == 0 and cache_hits > 0,
                 "cache_hits": cache_hits,
                 "cache_misses": cache_misses,
+                "parse_errors": parse_errors,
             },
         )
 

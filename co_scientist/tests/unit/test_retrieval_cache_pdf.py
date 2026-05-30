@@ -74,6 +74,37 @@ async def test_local_pdf_search_requires_session_context(tmp_cfg) -> None:
     assert "session" in (result.error_message or "").lower()
 
 
+def test_workspace_rejects_relative_project_file_path_traversal(tmp_cfg) -> None:
+    with pytest.raises(ValueError, match="workspace"):
+        ScientistWorkspace(tmp_cfg, "ses_pdf").add_artifact(
+            kind="project_file",
+            path="../outside.pdf",
+            title="Outside",
+            metadata={"content_type": "application/pdf"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_local_pdf_search_skips_unparseable_pdf(tmp_path: Path, tmp_cfg) -> None:
+    pdf_path = tmp_path / "corrupted.pdf"
+    pdf_path.write_text("not a pdf")
+    ScientistWorkspace(tmp_cfg, "ses_bad_pdf").add_artifact(
+        kind="project_file",
+        path=pdf_path,
+        title="Corrupted paper",
+        metadata={"content_type": "application/pdf"},
+    )
+
+    result = await LocalPDFSearchTool(tmp_cfg).call(
+        {"query": "anything", "max_results": 5},
+        ToolCtx(cfg=tmp_cfg, session_id="ses_bad_pdf"),
+    )
+
+    assert result.is_error is False
+    assert result.content["n"] == 0
+    assert result.metadata["parse_errors"] == 1
+
+
 def _write_minimal_text_pdf(path: Path, text: str) -> None:
     escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
     stream = f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET".encode()

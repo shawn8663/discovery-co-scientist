@@ -61,7 +61,7 @@ before broadening the executable scientific skill surface.
   - Cover malicious abstracts, markdown, HTML, and local PDF text.
   - Assert untrusted content remains quoted and cannot alter agent instructions.
 
-- [ ] Add oversized-download and local-PDF safety tests.
+- [x] Add oversized-download and local-PDF safety tests.
   - Verify configured byte limits.
   - Verify parser failures do not crash sessions.
   - Verify path traversal is rejected for local project files.
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with oversized-download and local-PDF safety tests, because untrusted
-content is now quoted before it re-enters the model and the next risk is
-unsafe or malformed retrieval inputs.
+Continue with science-skill secret injection, because malformed retrieval
+inputs are now covered and executable skills need least-privilege secret
+handling before broader skill packs are added.
