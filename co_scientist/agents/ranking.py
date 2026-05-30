@@ -15,6 +15,7 @@ from __future__ import annotations
 import random
 import re
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import combinations
 from typing import Any, Literal
@@ -52,6 +53,14 @@ log = get_logger("ranking")
 
 
 PairMode = Literal["pairwise", "debate"]
+_MAX_RANKING_REVIEW_CHARS = 1200
+
+
+@dataclass(frozen=True)
+class _ReviewDigest:
+    text: str
+    original_chars: int
+    sent_chars: int
 
 
 class RankingAgent(BaseAgent):
@@ -353,8 +362,20 @@ class RankingAgent(BaseAgent):
         # Anchor on the lower-ID hypothesis so cache hits cluster on it.
         anchor, opponent = (a, b) if a.id <= b.id else (b, a)
         anchor_is_a = anchor is a
-        review_anchor = await self._best_review(anchor.id)
-        review_opp = await self._best_review(opponent.id)
+        digest_anchor = await self._best_review(anchor.id)
+        digest_opp = await self._best_review(opponent.id)
+        review_anchor = digest_anchor.text if digest_anchor is not None else "(no review)"
+        review_opp = digest_opp.text if digest_opp is not None else "(no review)"
+        original_review_chars = sum(
+            digest.original_chars
+            for digest in (digest_anchor, digest_opp)
+            if digest is not None
+        )
+        sent_review_chars = sum(
+            digest.sent_chars
+            for digest in (digest_anchor, digest_opp)
+            if digest is not None
+        )
 
         template = "ranking.debate" if mode == "debate" else "ranking.pairwise"
         prompt_kwargs = {
@@ -407,6 +428,9 @@ class RankingAgent(BaseAgent):
             "cache_write": resp.cache_write,
             "cost_usd": resp.cost_usd,
             "transcript_id": resp.transcript_id,
+            "review_chars_original": original_review_chars,
+            "review_chars_sent": sent_review_chars,
+            "review_chars_saved": max(0, original_review_chars - sent_review_chars),
         }
         text = self._final_text(resp)
         choice = _parse_better_idea(text)
@@ -447,13 +471,15 @@ class RankingAgent(BaseAgent):
             },
         )
 
-    async def _best_review(self, hypothesis_id: str) -> str | None:
+    async def _best_review(self, hypothesis_id: str) -> _ReviewDigest | None:
         rs = await rev_repo.list_for_hypothesis(self.deps.db, hypothesis_id)
         if not rs:
             return None
         # Prefer 'full' kind if present.
         rs_sorted = sorted(rs, key=lambda r: (r.kind != "full", -(r.scores.novelty or 0)))
-        return rs_sorted[0].body
+        body = rs_sorted[0].body
+        digest = _digest_review_for_ranking(body)
+        return _ReviewDigest(text=digest, original_chars=len(body), sent_chars=len(digest))
 
 
 _VERDICT_DIGIT_RE = re.compile(r"^[\W_]*\**\s*([12])\b")
@@ -461,6 +487,49 @@ _VERDICT_DIGIT_RE = re.compile(r"^[\W_]*\**\s*([12])\b")
 
 def _same_dedup_cluster(a: Hypothesis, b: Hypothesis) -> bool:
     return bool(a.dedup_cluster and a.dedup_cluster == b.dedup_cluster)
+
+
+def _digest_review_for_ranking(
+    body: str,
+    *,
+    max_chars: int = _MAX_RANKING_REVIEW_CHARS,
+) -> str:
+    cleaned = body.strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+
+    lines = [line.rstrip() for line in cleaned.splitlines()]
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if (
+            stripped.startswith("# Review")
+            or stripped.startswith("**Verdict.")
+            or stripped.startswith("**Scores.")
+        ):
+            kept.append(stripped)
+
+    for heading in ("## Assumptions", "## Evidence", "## Notes"):
+        if heading not in lines:
+            continue
+        start = lines.index(heading)
+        kept.append(heading)
+        added = 0
+        for line in lines[start + 1:]:
+            stripped = line.strip()
+            if stripped.startswith("## "):
+                break
+            if not stripped:
+                continue
+            kept.append(stripped)
+            added += 1
+            if added >= 4:
+                break
+
+    digest = "\n".join(dict.fromkeys(kept)).strip() or cleaned[:max_chars]
+    if len(digest) <= max_chars:
+        return digest
+    return digest[: max_chars - 3].rstrip() + "..."
 
 
 def _parse_better_idea(text: str) -> int | None:

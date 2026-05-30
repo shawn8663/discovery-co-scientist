@@ -50,7 +50,7 @@ before broadening the executable scientific skill surface.
   - Promote only promising hypotheses to full Reflection.
   - Add tests proving low-promise hypotheses skip expensive retrieval tools.
 
-- [ ] Add prompt compression for Ranking.
+- [x] Add prompt compression for Ranking.
   - Feed Ranking structured review digests instead of full review bodies where possible.
   - Preserve full details for final overview and top-ranked debate paths.
   - Measure ranking prompt token reduction.
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with Ranking prompt compression, because cheap Reflection now avoids
-some expensive reviews and the next cost lever is reducing prompt volume for
-the tournament comparisons that remain.
+Continue with prompt-injection fixtures, because the main efficiency items are
+now in place and the next roadmap block hardens retrieved, fetched, and local
+document content before expanding the scientific skill surface.

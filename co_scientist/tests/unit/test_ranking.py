@@ -11,9 +11,10 @@ import pytest
 from co_scientist.agents.ranking import RankingAgent, _parse_better_idea
 from co_scientist.config import Config
 from co_scientist.llm.anthropic_client import AnthropicResponse
-from co_scientist.models import Hypothesis, ResearchPlan, Session, Task
+from co_scientist.models import Hypothesis, ResearchPlan, Review, ReviewScores, Session, Task
 from co_scientist.storage.repos import events as events_repo
 from co_scientist.storage.repos import hypotheses as hyp_repo
+from co_scientist.storage.repos import reviews as rev_repo
 from co_scientist.storage.repos import sessions as sess_repo
 
 # ----------------------------- verdict parser ----------------------------- #
@@ -193,6 +194,24 @@ async def test_ranking_emits_match_trace_event(tmp_cfg, conn) -> None:
             state="reviewed",
         ))
         await hyp_repo.init_tournament(conn, hid, initial_elo=1200)
+        await rev_repo.insert(conn, Review(
+            id=f"rev_{hid}",
+            hypothesis_id=hid,
+            session_id=session.id,
+            created_at=now,
+            kind="full",
+            verdict="missing_piece",
+            scores=ReviewScores(novelty=0.8, correctness=0.7, testability=0.6),
+            body=(
+                "# Review\n\n"
+                "**Verdict.** missing_piece\n\n"
+                "**Scores.** novelty 0.80 · correctness 0.70 · testability 0.60\n\n"
+                "## Evidence\n"
+                "- Relevant claim — https://example.test/paper\n  > quote\n\n"
+                "## Notes\n" + " ".join(f"long-note-{i}" for i in range(500))
+            ),
+            artifact_path=f"artifacts/{session.id}/reviews/rev_{hid}.json",
+        ))
 
     raw = SimpleNamespace(
         content=[SimpleNamespace(type="text", text="Reasoning.\nbetter idea: 1")],
@@ -232,3 +251,5 @@ async def test_ranking_emits_match_trace_event(tmp_cfg, conn) -> None:
     assert event["payload"]["cache_read"] == 200
     assert event["payload"]["cost_usd"] == pytest.approx(0.03)
     assert event["payload"]["duration_ms"] >= 0
+    assert event["payload"]["review_chars_original"] > event["payload"]["review_chars_sent"]
+    assert event["payload"]["review_chars_saved"] > 0

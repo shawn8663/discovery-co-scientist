@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from co_scientist.agents.generation import _filter_to_seen_urls, _render_hypothesis_md
+from co_scientist.agents.ranking import _digest_review_for_ranking
 from co_scientist.agents.reflection import _render_review_md
 
 
@@ -60,3 +61,33 @@ def test_review_md_renders_sections() -> None:
     assert "plausible" in md
     assert "https://e.example/p" in md
     assert "n" in md
+
+
+def test_ranking_review_digest_preserves_decision_signals() -> None:
+    long_notes = " ".join(f"tail-{i}" for i in range(400))
+    body = (
+        "# Review\n\n"
+        "**Verdict.** missing_piece\n\n"
+        "**Scores.** novelty 0.90 · correctness 0.60 · testability 0.80\n\n"
+        "## Assumptions\n"
+        "- *plausible*: A1\n  R1\n"
+        "- *uncertain*: A2\n  R2\n\n"
+        "## Evidence\n"
+        "- Claim one — https://example.test/one\n  > quote one\n"
+        "- Claim two — https://example.test/two\n  > quote two\n\n"
+        f"## Notes\n{long_notes}"
+    )
+
+    digest = _digest_review_for_ranking(body, max_chars=450)
+
+    assert len(digest) <= 450
+    assert "**Verdict.** missing_piece" in digest
+    assert "novelty 0.90" in digest
+    assert "## Evidence" in digest
+    assert "tail-399" not in digest
+
+
+def test_ranking_review_digest_leaves_short_reviews_intact() -> None:
+    body = "# Review\n\n**Verdict.** neutral\n\nBrief."
+
+    assert _digest_review_for_ranking(body, max_chars=450) == body
