@@ -93,7 +93,7 @@ before broadening the executable scientific skill surface.
     evolution, meta-review, and final overview prompts.
   - Assert parser-required terminal tool names appear where needed.
 
-- [ ] Add AML-style regression benchmark report.
+- [x] Add AML-style regression benchmark report.
   - Compare multi-agent flow against raw LLM baselines.
   - Report quality, cost, latency, duplicate rate, retrieval hits, and gold-set recall.
   - Save outputs as reproducible benchmark artifacts.
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with the AML-style regression benchmark report, because orchestration
-and prompt contracts are now guarded and benchmark outputs should summarize the
-quality, cost, latency, duplicate, retrieval, and recall signals already added.
+Continue with the augmented workspace items, because P1 paper fidelity and
+benchmark reporting are now covered and the remaining tasks build the
+researcher-facing artifact workflow.

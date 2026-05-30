@@ -17,6 +17,7 @@ import pytest
 from co_scientist.bench import PRESETS, get_preset
 from co_scientist.bench.runner import (
     BenchCandidate,
+    _build_regression_report,
     _build_summary,
     _candidate_cfg,
     _CandidateState,
@@ -249,6 +250,66 @@ def test_build_summary_includes_ranking_cost_metrics() -> None:
     assert row["ranking_matches_per_dollar"] == pytest.approx(4)
     assert row["ranking_prompt_tokens_per_match"] == pytest.approx(750)
     assert row["ranking_latency_ms_avg"] == pytest.approx(1500)
+
+
+def test_build_regression_report_includes_quality_cost_latency_and_recall() -> None:
+    summary = {
+        "bench_id": "bnc_aml",
+        "goal": "AML benchmark",
+        "judge": "anthropic:judge",
+        "n_matches": 4,
+        "goldset": {"label": "aml_gold", "entities": ["LAT1", "DHODH"]},
+        "candidates": [
+            {
+                "label": "pipeline",
+                "provider": "anthropic",
+                "model": "claude",
+                "mode": "pipeline",
+                "mean_elo": 1234,
+                "top_elo": 1300,
+                "cost_usd": 1.25,
+                "mean_latency_ms": 500,
+                "duplicate_rate": 0.1,
+                "retrieval_tool_calls": 3,
+                "retrieval_cache_hit_ratio": 0.5,
+                "retrieval_latency_ms_avg": 40,
+                "ranking_cost_usd": 0.2,
+                "ranking_latency_ms_avg": 100,
+                "gold_recall": 0.5,
+                "gold_hits": 1,
+            },
+            {
+                "label": "raw",
+                "provider": "anthropic",
+                "model": "claude",
+                "mode": "direct",
+                "mean_elo": 1180,
+                "top_elo": 1200,
+                "cost_usd": 0.5,
+                "mean_latency_ms": 300,
+                "duplicate_rate": 0.0,
+                "retrieval_tool_calls": 0,
+                "retrieval_cache_hit_ratio": None,
+                "retrieval_latency_ms_avg": None,
+                "ranking_cost_usd": 0.2,
+                "ranking_latency_ms_avg": 100,
+                "gold_recall": 0.0,
+                "gold_hits": 0,
+            },
+        ],
+    }
+
+    report = _build_regression_report(summary)
+
+    assert "# AML-style regression benchmark report" in report
+    assert "quality" in report.lower()
+    assert "cost" in report.lower()
+    assert "latency" in report.lower()
+    assert "duplicate" in report.lower()
+    assert "retrieval" in report.lower()
+    assert "gold-set recall" in report.lower()
+    assert "| pipeline | pipeline |" in report
+    assert "| raw | direct |" in report
 
 
 # ----------------------------- cross-tournament ----------------------------- #

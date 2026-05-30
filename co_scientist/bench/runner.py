@@ -28,7 +28,7 @@ from ..models import Hypothesis, ResearchPlan, Session, Task
 from ..orchestrator.elo import update_elo
 from ..safety.quoting import quote_hypothesis
 from ..storage import db as db_mod
-from ..storage.artifacts import write_json
+from ..storage.artifacts import write_json, write_text
 from ..storage.repos import hypotheses as hyp_repo
 from ..storage.repos import sessions as sess_repo
 from ..storage.repos import tasks as task_repo
@@ -249,6 +249,15 @@ async def run_bench(
             bench_id_, goal, states, judge_provider, judge_model, n_matches,
             goldset=goldset,
         )
+        report_path = await write_text(
+            base_cfg,
+            ses.id,
+            "bench",
+            f"{bench_id_}_report",
+            ".md",
+            _build_regression_report(summary),
+        )
+        summary["report_artifact_path"] = report_path
         artifact_path = await write_json(
             base_cfg, ses.id, "bench", bench_id_, summary
         )
@@ -1025,6 +1034,74 @@ def _build_summary(
         } if goldset else None,
         "candidates": rows,
     }
+
+
+def _build_regression_report(summary: dict[str, Any]) -> str:
+    candidates = summary.get("candidates") or []
+    lines = [
+        "# AML-style regression benchmark report",
+        "",
+        f"**Bench ID.** `{summary.get('bench_id', '')}`",
+        f"**Goal.** {summary.get('goal', '')}",
+        f"**Judge.** `{summary.get('judge', '')}`",
+        f"**Matches.** {summary.get('n_matches', 0)}",
+        "",
+    ]
+    goldset = summary.get("goldset")
+    if isinstance(goldset, dict):
+        entities = goldset.get("entities") or []
+        lines.extend([
+            f"**Gold set.** `{goldset.get('label', '')}` ({len(entities)} entities)",
+            "",
+        ])
+    lines.extend([
+        "## Candidate metrics",
+        "",
+        "| label | mode | quality mean Elo | top Elo | cost USD | latency ms | duplicate rate | retrieval calls | retrieval cache hit ratio | retrieval latency ms | ranking cost USD | ranking latency ms | gold-set recall | gold hits |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    for row in candidates:
+        lines.append(
+            "| {label} | {mode} | {mean_elo} | {top_elo} | {cost_usd} | {latency} | "
+            "{duplicate_rate} | {retrieval_calls} | {retrieval_hit_ratio} | "
+            "{retrieval_latency} | {ranking_cost} | {ranking_latency} | "
+            "{gold_recall} | {gold_hits} |".format(
+                label=row.get("label", ""),
+                mode=row.get("mode", ""),
+                mean_elo=_fmt(row.get("mean_elo")),
+                top_elo=_fmt(row.get("top_elo")),
+                cost_usd=_fmt(row.get("cost_usd")),
+                latency=_fmt(row.get("mean_latency_ms")),
+                duplicate_rate=_fmt(row.get("duplicate_rate")),
+                retrieval_calls=_fmt(row.get("retrieval_tool_calls")),
+                retrieval_hit_ratio=_fmt(row.get("retrieval_cache_hit_ratio")),
+                retrieval_latency=_fmt(row.get("retrieval_latency_ms_avg")),
+                ranking_cost=_fmt(row.get("ranking_cost_usd")),
+                ranking_latency=_fmt(row.get("ranking_latency_ms_avg")),
+                gold_recall=_fmt(row.get("gold_recall")),
+                gold_hits=_fmt(row.get("gold_hits")),
+            )
+        )
+    lines.extend([
+        "",
+        "## Interpretation checklist",
+        "",
+        "- Quality: compare mean Elo, top Elo, and gold-set recall.",
+        "- Cost: compare total generation cost and ranking cost.",
+        "- Latency: compare generation and ranking latency.",
+        "- Duplicate rate: lower values indicate less wasted generation.",
+        "- Retrieval: compare retrieval call count, cache hit ratio, and retrieval latency.",
+        "- Gold-set recall: use the AML gold set when configured to compare against known entities.",
+    ])
+    return "\n".join(lines) + "\n"
+
+
+def _fmt(value: Any) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, float):
+        return f"{value:.3g}"
+    return str(value)
 
 
 def _record_retrieval_metrics(st: _CandidateState, tool_calls: list[dict[str, Any]]) -> None:
