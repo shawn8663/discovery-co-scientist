@@ -76,7 +76,7 @@ before broadening the executable scientific skill surface.
   - Require approval for broad write scope, network access, or sensitive safety levels.
   - Add UI/API tests for approval-required and approved execution.
 
-- [ ] Add final-report UI status for withheld reports.
+- [x] Add final-report UI status for withheld reports.
   - Show when final output was blocked or redacted by the safety gate.
   - Link to the safety rationale artifact.
   - Add web UI regression coverage.
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with final-report UI status for withheld reports, because risky skill
-execution now has a visible approval manifest and users also need clear
-feedback when safety gates block generated reports.
+Continue with Supplement 8 orchestration tests, because the P1 efficiency and
+safety/security items are now complete and the next block verifies paper
+fidelity.

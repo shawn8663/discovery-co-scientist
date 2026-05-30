@@ -8,6 +8,15 @@
         <li>overview</li>
     </ul>
 </nav>
+{% if safety_status %}
+<article class="safety-status safety-status-{{ safety_status }}">
+    <header><strong>{{ safety_title }}</strong></header>
+    <p>{{ safety_message }}</p>
+    {% if safety_artifact_url %}
+    <p><a href="{{ safety_artifact_url }}">Safety rationale artifact</a></p>
+    {% endif %}
+</article>
+{% endif %}
 <details>
     <summary>Raw markdown</summary>
     <pre>{{ overview_md }}</pre>

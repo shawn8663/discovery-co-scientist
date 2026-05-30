@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
@@ -31,6 +31,7 @@ from ..logging import get_logger
 from ..models import SystemFeedback
 from ..orchestrator.events import GLOBAL_BUS
 from ..storage import db as db_mod
+from ..storage.artifacts import read_json
 from ..storage.repos import events as events_repo
 from ..storage.repos import feedback as fb_repo
 from ..storage.repos import hypotheses as hyp_repo
@@ -172,6 +173,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             if not path.is_file():
                 raise HTTPException(status_code=404, detail="overview missing on disk")
             overview_md = path.read_text()
+            safety_context = _overview_safety_context(cfg, session.final_overview, overview_md)
             return TEMPLATES.TemplateResponse(
                 request,
                 "overview.html",
@@ -179,10 +181,28 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     "session": session,
                     "overview_html": render_markdown(overview_md),
                     "overview_md": overview_md,
+                    **safety_context,
                 },
             )
         finally:
             await conn.close()
+
+    @app.get("/sessions/{session_id}/artifact")
+    async def session_artifact(session_id: str, path: str):
+        prefix = f"artifacts/{session_id}/"
+        if not path.startswith(prefix):
+            raise HTTPException(status_code=404, detail="artifact unavailable")
+        base = cfg.data_dir.resolve()
+        try:
+            resolved = (cfg.data_dir / path).resolve()
+            resolved.relative_to(base)
+        except (ValueError, OSError) as e:
+            raise HTTPException(status_code=404, detail="artifact unavailable") from e
+        if not resolved.is_file():
+            raise HTTPException(status_code=404, detail="artifact missing")
+        if resolved.suffix == ".json":
+            return JSONResponse(await read_json(cfg, path))
+        return PlainTextResponse(resolved.read_text())
 
     # ----------------------------- API + SSE ----------------------------- #
 
@@ -298,6 +318,42 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
 
 # ----------------------------- helpers ----------------------------- #
+
+
+def _overview_safety_context(
+    cfg: Config,
+    overview_rel_path: str,
+    overview_md: str,
+) -> dict[str, Any]:
+    stripped = overview_md.lstrip()
+    if stripped.startswith("# Research overview withheld"):
+        status = "withheld"
+        title = "Final overview withheld"
+        message = "The generated overview was blocked or quarantined by the final safety gate."
+    elif stripped.startswith("> Safety review warning:"):
+        status = "warning"
+        title = "Safety review warning"
+        message = "The generated overview passed with a safety warning."
+    else:
+        return {
+            "safety_status": None,
+            "safety_title": "",
+            "safety_message": "",
+            "safety_artifact_url": "",
+        }
+
+    safety_rel_path = str(Path(overview_rel_path).with_name("overview_safety.json"))
+    safety_path = cfg.data_dir / safety_rel_path
+    safety_artifact_url = ""
+    if safety_path.is_file():
+        session_id = Path(overview_rel_path).parts[1] if len(Path(overview_rel_path).parts) > 1 else ""
+        safety_artifact_url = f"/sessions/{session_id}/artifact?path={safety_rel_path}"
+    return {
+        "safety_status": status,
+        "safety_title": title,
+        "safety_message": message,
+        "safety_artifact_url": safety_artifact_url,
+    }
 
 
 async def _list_sessions(cfg: Config) -> list[dict[str, Any]]:
