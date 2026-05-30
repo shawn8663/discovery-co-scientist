@@ -1,0 +1,103 @@
+"""Tests for built-in scientific retrieval tools."""
+
+from __future__ import annotations
+
+from co_scientist.tools.builtins.clinical_trials import _normalize_clinical_trials
+from co_scientist.tools.builtins.openalex import _normalize_openalex
+from co_scientist.tools.registry import ToolRegistry
+
+
+def test_registry_discovers_expanded_retrieval_tools(tmp_cfg) -> None:
+    reg = ToolRegistry(tmp_cfg).discover()
+    names = {tool.name for tool in reg.all()}
+    assert "openalex_search" in names
+    assert "clinical_trials_search" in names
+
+
+def test_generation_reflection_evolution_can_use_expanded_retrieval(tmp_cfg) -> None:
+    reg = ToolRegistry(tmp_cfg).discover()
+    for agent in ("generation", "reflection", "evolution"):
+        names = {tool.name for tool in reg.tools_for(agent)}
+        assert "openalex_search" in names
+        assert "clinical_trials_search" in names
+
+
+def test_openalex_normalizes_work_records() -> None:
+    payload = {
+        "results": [
+            {
+                "id": "https://openalex.org/W123",
+                "doi": "https://doi.org/10.1000/example",
+                "display_name": "A useful paper",
+                "publication_year": 2025,
+                "cited_by_count": 12,
+                "authorships": [
+                    {"author": {"display_name": "Ada Lovelace"}},
+                    {"author": {"display_name": "Grace Hopper"}},
+                ],
+                "primary_location": {
+                    "source": {"display_name": "Journal of Useful Results"},
+                    "landing_page_url": "https://example.org/work",
+                },
+                "abstract_inverted_index": {
+                    "Useful": [0],
+                    "abstract": [1],
+                },
+            }
+        ]
+    }
+
+    records = _normalize_openalex(payload, limit=10)
+
+    assert records == [
+        {
+            "id": "https://openalex.org/W123",
+            "title": "A useful paper",
+            "abstract": "Useful abstract",
+            "authors": ["Ada Lovelace", "Grace Hopper"],
+            "year": 2025,
+            "doi": "10.1000/example",
+            "journal": "Journal of Useful Results",
+            "cited_by_count": 12,
+            "url": "https://example.org/work",
+        }
+    ]
+
+
+def test_clinical_trials_normalizes_study_records() -> None:
+    payload = {
+        "studies": [
+            {
+                "protocolSection": {
+                    "identificationModule": {
+                        "nctId": "NCT00000001",
+                        "briefTitle": "Example Trial",
+                    },
+                    "statusModule": {"overallStatus": "RECRUITING", "startDateStruct": {"date": "2026-01"}},
+                    "descriptionModule": {"briefSummary": "A concise trial summary."},
+                    "conditionsModule": {"conditions": ["AML"]},
+                    "designModule": {"phases": ["PHASE2"], "studyType": "INTERVENTIONAL"},
+                    "armsInterventionsModule": {
+                        "interventions": [{"name": "Drug A"}, {"name": "Drug B"}]
+                    },
+                }
+            }
+        ]
+    }
+
+    records = _normalize_clinical_trials(payload, limit=10)
+
+    assert records == [
+        {
+            "nct_id": "NCT00000001",
+            "title": "Example Trial",
+            "summary": "A concise trial summary.",
+            "status": "RECRUITING",
+            "conditions": ["AML"],
+            "interventions": ["Drug A", "Drug B"],
+            "phases": ["PHASE2"],
+            "study_type": "INTERVENTIONAL",
+            "start_date": "2026-01",
+            "url": "https://clinicaltrials.gov/study/NCT00000001",
+        }
+    ]

@@ -17,7 +17,15 @@ def test_registry_discovers_builtins(tmp_cfg) -> None:
     tmp_cfg.secrets.TAVILY_API_KEY = "sk-fake"
     reg = ToolRegistry(tmp_cfg).discover()
     names = {t.name for t in reg.all()}
-    assert {"web_search", "web_fetch", "pubmed_search", "arxiv_search", "europe_pmc_search"} <= names
+    assert {
+        "web_search",
+        "web_fetch",
+        "pubmed_search",
+        "arxiv_search",
+        "europe_pmc_search",
+        "openalex_search",
+        "clinical_trials_search",
+    } <= names
 
 
 def test_web_search_skipped_when_no_search_api_key(tmp_cfg) -> None:
@@ -32,6 +40,8 @@ def test_web_search_skipped_when_no_search_api_key(tmp_cfg) -> None:
     # Other literature tools still available.
     assert "pubmed_search" in names
     assert "europe_pmc_search" in names
+    assert "openalex_search" in names
+    assert "clinical_trials_search" in names
 
 
 def test_agent_allowlist_resolution(tmp_cfg) -> None:

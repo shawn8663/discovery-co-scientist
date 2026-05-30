@@ -11,7 +11,9 @@ from typing import Any
 from ..config import Config
 from .base import Tool, ToolCtx, ToolResult, to_anthropic_tool
 from .builtins.arxiv import ArxivSearchTool
+from .builtins.clinical_trials import ClinicalTrialsSearchTool
 from .builtins.europe_pmc import EuropePMCSearchTool
+from .builtins.openalex import OpenAlexSearchTool
 from .builtins.pubmed import PubmedSearchTool
 from .science_skills import ScienceSkillTool, discover_skills
 from .web_fetch import WebFetchTool
@@ -23,11 +25,13 @@ AGENT_TOOLS: dict[str, set[str]] = {
     "generation": {
         "web_search", "web_fetch",
         "pubmed_search", "arxiv_search", "europe_pmc_search",
+        "openalex_search", "clinical_trials_search",
         "literature_*",   # any science-skills literature_* tools
     },
     "reflection": {
         "web_search", "web_fetch",
         "pubmed_search", "arxiv_search", "europe_pmc_search",
+        "openalex_search", "clinical_trials_search",
         "literature_*",
         # code_exec wired in M2
     },
@@ -35,6 +39,7 @@ AGENT_TOOLS: dict[str, set[str]] = {
     "evolution": {
         "web_search", "web_fetch",
         "pubmed_search", "arxiv_search", "europe_pmc_search",
+        "openalex_search", "clinical_trials_search",
         "literature_*",
     },
     "proximity": set(),
@@ -54,6 +59,8 @@ class ToolRegistry:
             PubmedSearchTool(self._cfg),
             ArxivSearchTool(),
             EuropePMCSearchTool(),
+            OpenAlexSearchTool(),
+            ClinicalTrialsSearchTool(),
         ):
             self._register(t)
         # web_search only registers if a backing search API key is set.
