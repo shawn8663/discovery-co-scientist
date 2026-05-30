@@ -192,6 +192,74 @@ async def test_science_skill_approval_required_policy_blocks_risky_tool(tmp_path
     assert result.content["approval_required"]["network_access"] is True
 
 
+@pytest.mark.asyncio
+async def test_science_skill_requires_visible_approval_for_declared_risk(
+    tmp_path: Path, tmp_cfg
+) -> None:
+    sk = tmp_path / "skill"
+    (sk / "scripts").mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        dedent(
+            """\
+            ---
+            name: declared_risky_skill
+            description: Needs visible approval
+            entrypoint: scripts/run.py
+            network_access: true
+            write_scope: project
+            requires_approval: true
+            ---
+            """
+        )
+    )
+    (sk / "scripts" / "run.py").write_text("print('{}')\n")
+    meta = parse_skill_md(sk)
+    assert meta is not None
+
+    result = await ScienceSkillTool(tmp_cfg, meta).call({}, ToolCtx(cfg=tmp_cfg, run_id="run_risky"))
+
+    assert result.is_error is True
+    approval = result.content["approval_required"]
+    assert approval["skill"] == "declared_risky_skill"
+    assert approval["network_access"] is True
+    assert approval["write_scope"] == "project"
+    assert approval["requires_approval"] is True
+
+
+@pytest.mark.asyncio
+async def test_science_skill_approved_risky_run_executes(tmp_path: Path, tmp_cfg) -> None:
+    sk = tmp_path / "skill"
+    (sk / "scripts").mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        dedent(
+            """\
+            ---
+            name: approved_risky_skill
+            description: Runs after approval
+            entrypoint: scripts/run.py
+            network_access: true
+            requires_approval: true
+            ---
+            """
+        )
+    )
+    (sk / "scripts" / "run.py").write_text("print('{\"ok\": true}')\n")
+    meta = parse_skill_md(sk)
+    assert meta is not None
+
+    result = await ScienceSkillTool(tmp_cfg, meta).call(
+        {},
+        ToolCtx(
+            cfg=tmp_cfg,
+            run_id="run_approved",
+            extra={"approved_science_skill_runs": ["approved_risky_skill"]},
+        ),
+    )
+
+    assert result.is_error is False
+    assert result.content["result"] == {"ok": True}
+
+
 def test_science_skill_env_injects_only_declared_secrets(monkeypatch, tmp_cfg) -> None:
     monkeypatch.setenv("NCBI_API_KEY", "ncbi-env")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-env")

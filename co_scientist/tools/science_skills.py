@@ -406,16 +406,20 @@ def _string_list(value: Any) -> list[str]:
 
 
 def _approval_required(cfg: Config, meta: SkillMeta, ctx: ToolCtx, run_id: str) -> bool:
-    if cfg.science_skills.execution_policy == "trusted_local":
-        return False
-    if cfg.science_skills.require_approval_for_risky_tools and not meta.is_risky:
-        return False
     approved = ctx.extra.get("approved_science_skill_runs", [])
-    return not (
+    if (
         ctx.extra.get("approve_all_science_skills")
         or meta.name in approved
         or run_id in approved
-    )
+    ):
+        return False
+    if meta.requires_approval:
+        return True
+    if cfg.science_skills.require_approval_for_risky_tools and meta.is_risky:
+        return True
+    if cfg.science_skills.execution_policy == "approval_required":
+        return not cfg.science_skills.require_approval_for_risky_tools
+    return False
 
 
 def _approval_manifest(meta: SkillMeta, run_id: str) -> dict[str, Any]:

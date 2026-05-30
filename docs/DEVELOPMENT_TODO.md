@@ -71,7 +71,7 @@ before broadening the executable scientific skill surface.
   - Log which secret names were made available without logging secret values.
   - Add tests for missing, allowed, and disallowed secret access.
 
-- [ ] Add visible approval gates for risky skill runs.
+- [x] Add visible approval gates for risky skill runs.
   - Require approval when `requires_approval` is true.
   - Require approval for broad write scope, network access, or sensitive safety levels.
   - Add UI/API tests for approval-required and approved execution.
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with visible approval gates for risky skill runs, because skills now
-receive only declared secrets and risky executions need an explicit local
-approval path before they run.
+Continue with final-report UI status for withheld reports, because risky skill
+execution now has a visible approval manifest and users also need clear
+feedback when safety gates block generated reports.
