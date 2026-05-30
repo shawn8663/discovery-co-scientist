@@ -391,6 +391,25 @@ class Supervisor:
         result,
     ) -> None:
         if result.kind == "hypothesis_created":
+            if result.hypothesis_ids:
+                hyps = await hyp_repo.list_for_session(conn, session.id)
+            else:
+                hyps = []
+            if len(hyps) >= 3:
+                await task_repo.enqueue(conn, Task(
+                    id=ids.task_id(), session_id=session.id,
+                    created_at=datetime.now(UTC),
+                    agent="proximity", action="UpdateProximityGraph",
+                    target_id=None,
+                    payload={
+                        "rebuild": True,
+                        "reason": "pre_reflection_duplicate_suppression",
+                    },
+                    priority=90, status="pending",
+                    idempotency_key=(
+                        f"{session.id}::proximity::pre_reflection::{len(hyps)}"
+                    ),
+                ))
             for hid in result.hypothesis_ids:
                 await task_repo.enqueue(conn, Task(
                     id=ids.task_id(), session_id=session.id,
