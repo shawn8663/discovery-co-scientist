@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +34,8 @@ class StorageCfg(BaseModel):
 class ScienceSkillsCfg(BaseModel):
     path: str = "./vendor/science-skills"
     pinned_commit: str = ""
+    execution_policy: Literal["trusted_local", "approval_required"] = "trusted_local"
+    require_approval_for_risky_tools: bool = True
 
 
 class EmbeddingsCfg(BaseModel):
@@ -158,6 +160,9 @@ class CodeExecCfg(BaseModel):
 class SafetyCfg(BaseModel):
     enable_classifier: bool = True
     enable_citation_verifier: bool = True
+    classifier_fail_open_in_dev: bool = True
+    classifier_failure_action: Literal["allow", "warn", "block", "quarantine"] = "block"
+    enable_final_report_gate: bool = True
     classifier_block_categories: list[str] = Field(
         default_factory=lambda: ["cbrn", "csam", "weapons", "illicit_synthesis"]
     )

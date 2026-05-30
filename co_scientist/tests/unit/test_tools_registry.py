@@ -5,8 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
+import pytest
+
+from co_scientist.tools.base import ToolCtx
 from co_scientist.tools.registry import ToolRegistry
-from co_scientist.tools.science_skills import discover_skills, parse_skill_md
+from co_scientist.tools.science_skills import ScienceSkillTool, discover_skills, parse_skill_md
 
 
 def test_registry_discovers_builtins(tmp_cfg) -> None:
@@ -53,7 +56,14 @@ def test_skill_md_parsing(tmp_path: Path, tmp_cfg, monkeypatch) -> None:
             ---
             name: my_test_skill
             description: A short description for the LLM
+            category: retrieval
             entrypoint: scripts/run.py
+            required_files: ["input.csv"]
+            required_secrets: ["NCBI_API_KEY"]
+            network_access: true
+            write_scope: run_workspace
+            expected_outputs: ["json"]
+            safety_level: trusted_local
             timeout_seconds: 30
             ---
 
@@ -69,6 +79,11 @@ def test_skill_md_parsing(tmp_path: Path, tmp_cfg, monkeypatch) -> None:
     assert meta.description.startswith("A short description")
     assert meta.entrypoint is not None and meta.entrypoint.name == "run.py"
     assert meta.timeout_seconds == 30
+    assert meta.category == "retrieval"
+    assert meta.required_files == ["input.csv"]
+    assert meta.requires_keys == ["NCBI_API_KEY"]
+    assert meta.network_access is True
+    assert meta.expected_outputs == ["json"]
 
     # discover_skills walks <science_skills.path>/skills
     monkeypatch.setattr(tmp_cfg.science_skills, "path", str(tmp_path))
@@ -85,3 +100,67 @@ def test_skill_md_without_front_matter_still_parses(tmp_path: Path) -> None:
     assert meta is not None
     assert meta.name == "raw_skill"
     assert meta.entrypoint is not None and meta.entrypoint.name == "main.py"
+
+
+@pytest.mark.asyncio
+async def test_science_skill_call_captures_provenance(tmp_path: Path, tmp_cfg) -> None:
+    sk = tmp_path / "skill"
+    (sk / "scripts").mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        dedent(
+            """\
+            ---
+            name: provenance_skill
+            description: Emits JSON
+            category: analysis
+            entrypoint: scripts/run.py
+            expected_outputs: ["summary_json"]
+            ---
+            """
+        )
+    )
+    (sk / "scripts" / "run.py").write_text(
+        "import json, sys\n"
+        "payload = json.loads(sys.stdin.read() or '{}')\n"
+        "print(json.dumps({'ok': True, 'payload': payload}))\n"
+    )
+    meta = parse_skill_md(sk)
+    assert meta is not None
+    tool = ScienceSkillTool(tmp_cfg, meta)
+
+    result = await tool.call({"args": {"x": 1}}, ToolCtx(cfg=tmp_cfg, run_id="run_1"))
+
+    assert result.is_error is False
+    assert result.content["result"]["ok"] is True
+    provenance = result.content["provenance"]
+    assert provenance["run_id"] == "run_1"
+    assert provenance["category"] == "analysis"
+    assert Path(provenance["cwd"], "provenance.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_science_skill_approval_required_policy_blocks_risky_tool(tmp_path: Path, tmp_cfg) -> None:
+    sk = tmp_path / "skill"
+    (sk / "scripts").mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        dedent(
+            """\
+            ---
+            name: network_skill
+            description: Needs network
+            entrypoint: scripts/run.py
+            network_access: true
+            requires_approval: true
+            ---
+            """
+        )
+    )
+    (sk / "scripts" / "run.py").write_text("print('{}')\n")
+    tmp_cfg.science_skills.execution_policy = "approval_required"
+    meta = parse_skill_md(sk)
+    assert meta is not None
+
+    result = await ScienceSkillTool(tmp_cfg, meta).call({}, ToolCtx(cfg=tmp_cfg, run_id="run_2"))
+
+    assert result.is_error is True
+    assert result.content["approval_required"]["network_access"] is True

@@ -50,6 +50,10 @@ def tool_run_id() -> str:
     return f"trn_{_ulid()}"
 
 
+def artifact_id() -> str:
+    return f"art_{_ulid()}"
+
+
 def bench_id() -> str:
     return f"bnc_{_ulid()}"
 

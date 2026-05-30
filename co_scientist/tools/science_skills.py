@@ -45,6 +45,22 @@ class SkillMeta:
     timeout_seconds: int = 120
     inputs_schema: dict[str, Any] | None = None
     requires_keys: list[str] = field(default_factory=list)
+    category: str = "analysis"
+    required_files: list[str] = field(default_factory=list)
+    network_access: bool = False
+    write_scope: str = "run_workspace"
+    expected_outputs: list[str] = field(default_factory=list)
+    safety_level: str = "trusted_local"
+    requires_approval: bool = False
+    provenance: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_risky(self) -> bool:
+        return self.requires_approval or self.network_access or self.write_scope not in {
+            "none",
+            "run_workspace",
+            "artifacts",
+        }
 
 
 def parse_skill_md(skill_dir: Path) -> SkillMeta | None:
@@ -112,6 +128,16 @@ def parse_skill_md(skill_dir: Path) -> SkillMeta | None:
     requires_keys: list[str] = []
     if isinstance(front.get("requires"), list):
         requires_keys = [str(x) for x in front["requires"]]
+    if isinstance(front.get("required_secrets"), list):
+        requires_keys.extend(str(x) for x in front["required_secrets"])
+
+    required_files = _string_list(front.get("required_files"))
+    expected_outputs = _string_list(front.get("expected_outputs"))
+    network_access = bool(front.get("network_access") or front.get("requires_network") or False)
+    write_scope = str(front.get("write_scope") or "run_workspace")
+    safety_level = str(front.get("safety_level") or "trusted_local")
+    requires_approval = bool(front.get("requires_approval") or False)
+    provenance = front.get("provenance") if isinstance(front.get("provenance"), dict) else {}
 
     return SkillMeta(
         name=name,
@@ -119,7 +145,15 @@ def parse_skill_md(skill_dir: Path) -> SkillMeta | None:
         entrypoint=entry,
         timeout_seconds=timeout,
         inputs_schema=inputs_schema,
-        requires_keys=requires_keys,
+        requires_keys=sorted(set(requires_keys)),
+        category=str(front.get("category") or "analysis"),
+        required_files=required_files,
+        network_access=network_access,
+        write_scope=write_scope,
+        expected_outputs=expected_outputs,
+        safety_level=safety_level,
+        requires_approval=requires_approval,
+        provenance=provenance,
     )
 
 
@@ -149,7 +183,16 @@ class ScienceSkillTool:
         self._cfg = cfg
         self.meta = meta
         self.name = _sanitize_name(meta.name)
-        self.description = meta.description[:1024]
+        meta_bits = [
+            f"category={meta.category}",
+            f"safety_level={meta.safety_level}",
+            f"write_scope={meta.write_scope}",
+        ]
+        if meta.network_access:
+            meta_bits.append("network_access=true")
+        if meta.expected_outputs:
+            meta_bits.append("expected_outputs=" + ",".join(meta.expected_outputs[:5]))
+        self.description = (meta.description + "\n\nMetadata: " + "; ".join(meta_bits))[:1024]
         self.input_schema = meta.inputs_schema or {
             "type": "object",
             "properties": {
@@ -171,6 +214,16 @@ class ScienceSkillTool:
         entry = self.meta.entrypoint
         run_id = ctx.run_id or tool_run_id()
 
+        if _approval_required(self._cfg, self.meta, ctx, run_id):
+            return ToolResult(
+                is_error=True,
+                error_message=(
+                    f"skill {self.meta.name!r} requires approval before execution "
+                    f"(network={self.meta.network_access}, write_scope={self.meta.write_scope})"
+                ),
+                content={"approval_required": _approval_manifest(self.meta, run_id)},
+            )
+
         env = _sanitized_env(self._cfg, self.meta.requires_keys or [])
         # cwd: per-call tmp under data/tool_runs/<skill>/<run_id>
         cwd = self._cfg.data_dir / "tool_runs" / self.meta.name / run_id
@@ -185,6 +238,7 @@ class ScienceSkillTool:
             cmd = [str(entry)]
 
         payload_stdin = json.dumps(args.get("args", args)).encode("utf-8")
+        started_at = time.time()
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -214,6 +268,17 @@ class ScienceSkillTool:
         rc = proc.returncode or 0
         stdout_text = stdout.decode("utf-8", errors="replace")
         stderr_text = stderr.decode("utf-8", errors="replace")
+        manifest = {
+            **_approval_manifest(self.meta, run_id),
+            "cmd": cmd,
+            "cwd": str(cwd),
+            "started_at": started_at,
+            "finished_at": time.time(),
+            "returncode": rc,
+            "stdout_bytes": len(stdout_text),
+            "stderr_bytes": len(stderr_text),
+        }
+        (cwd / "provenance.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
         # Persist raw artifact
         if ctx.session_id is not None:
@@ -228,6 +293,7 @@ class ScienceSkillTool:
                     "skill": self.meta.name,
                     "args": args,
                     "cmd": cmd,
+                    "provenance": manifest,
                     "returncode": rc,
                     "stdout": stdout_text[:200_000],
                     "stderr": stderr_text[:50_000],
@@ -254,6 +320,12 @@ class ScienceSkillTool:
         out_content: dict[str, Any] = {"result": parsed}
         if parse_error:
             out_content["parse_error"] = parse_error
+        out_content["provenance"] = {
+            "run_id": run_id,
+            "category": self.meta.category,
+            "safety_level": self.meta.safety_level,
+            "cwd": str(cwd),
+        }
         return ToolResult(
             content=out_content,
             duration_ms=int((time.monotonic() - t0) * 1000),
@@ -304,6 +376,43 @@ def _sanitized_env(cfg: Config, extra_required: list[str]) -> dict[str, str]:
         if val and sk not in env:
             env[sk] = val
     return env
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(x) for x in value]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _approval_required(cfg: Config, meta: SkillMeta, ctx: ToolCtx, run_id: str) -> bool:
+    if cfg.science_skills.execution_policy == "trusted_local":
+        return False
+    if cfg.science_skills.require_approval_for_risky_tools and not meta.is_risky:
+        return False
+    approved = ctx.extra.get("approved_science_skill_runs", [])
+    return not (
+        ctx.extra.get("approve_all_science_skills")
+        or meta.name in approved
+        or run_id in approved
+    )
+
+
+def _approval_manifest(meta: SkillMeta, run_id: str) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "skill": meta.name,
+        "category": meta.category,
+        "required_files": meta.required_files,
+        "required_secrets": meta.requires_keys,
+        "network_access": meta.network_access,
+        "write_scope": meta.write_scope,
+        "expected_outputs": meta.expected_outputs,
+        "safety_level": meta.safety_level,
+        "requires_approval": meta.requires_approval,
+        "provenance": meta.provenance,
+    }
 
 
 _BAD_NAME_RE = re.compile(r"[^a-z0-9_]+")

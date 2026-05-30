@@ -16,6 +16,8 @@ data_dir = "./data"
 [science_skills]
 path = "./vendor/science-skills"
 pinned_commit = ""                   # set after first clone
+execution_policy = "trusted_local"   # trusted_local | approval_required
+require_approval_for_risky_tools = true
 
 [embeddings]
 provider = "voyage"                  # voyage | openai
@@ -128,6 +130,9 @@ local_mem_mb = 512
 [safety]
 enable_classifier = true
 enable_citation_verifier = true
+classifier_fail_open_in_dev = true   # set false for hosted/institutional pilots
+classifier_failure_action = "block"  # allow | warn | quarantine | block
+enable_final_report_gate = true
 classifier_block_categories = ["cbrn", "csam", "weapons", "illicit_synthesis"]
 classifier_warn_categories = ["dual_use_bio"]
 

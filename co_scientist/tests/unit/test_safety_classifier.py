@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from co_scientist.config import Config
-from co_scientist.safety.classifier import ClassifierResult
+from co_scientist.safety.classifier import ClassifierResult, SafetyClassifier
 
 
 def test_benign_is_allowed() -> None:
@@ -35,3 +37,32 @@ def test_unflagged_other_category_allows() -> None:
     cfg = Config()
     r = ClassifierResult(categories=["unknown_label"], confidence=0.5, rationale="x")
     assert r.action(cfg) == "allow"
+
+
+def test_safety_unavailable_uses_configured_failure_action() -> None:
+    cfg = Config()
+    cfg.safety.classifier_failure_action = "quarantine"
+    r = ClassifierResult(categories=["safety_unavailable"], confidence=1.0, rationale="x")
+    assert r.action(cfg) == "quarantine"
+
+
+@pytest.mark.asyncio
+async def test_missing_key_fails_open_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = Config()
+    cfg.secrets.ANTHROPIC_API_KEY = ""
+    r = await SafetyClassifier(cfg).classify("benign goal")
+    assert r.categories == ["none"]
+    assert r.action(cfg) == "allow"
+    assert "fail-open" in r.rationale
+
+
+@pytest.mark.asyncio
+async def test_missing_key_can_fail_closed(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = Config()
+    cfg.secrets.ANTHROPIC_API_KEY = ""
+    cfg.safety.classifier_fail_open_in_dev = False
+    r = await SafetyClassifier(cfg).classify("benign goal")
+    assert r.categories == ["safety_unavailable"]
+    assert r.action(cfg) == "block"

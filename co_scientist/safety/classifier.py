@@ -5,8 +5,10 @@ A small Haiku-backed classifier with a structured-output tool. Placement:
 - hypothesis-save time (mandatory): ok / quarantine / block
 - final-report time (optional): ok / redact_quarantined / block_publish
 
-Defensive use only. When the API key is missing, we return `ok` and log a
-warning rather than crashing the session — agents stay functional in dev.
+Defensive use only. In local development the classifier can fail open so agents
+stay functional without a key. Production-style configs should set
+`safety.classifier_fail_open_in_dev = false`, which turns missing keys or model
+errors into a configurable safety action.
 """
 
 from __future__ import annotations
@@ -37,12 +39,13 @@ CLASSIFY_TOOL: dict[str, Any] = {
                     "type": "string",
                     "enum": [
                         "none",
-                        "dual_use_bio",
-                        "cbrn",
-                        "weapons",
-                        "illicit_synthesis",
-                        "csam",
-                    ],
+                    "dual_use_bio",
+                    "cbrn",
+                    "weapons",
+                    "illicit_synthesis",
+                    "csam",
+                    "safety_unavailable",
+                ],
                 },
                 "description": "All categories that apply. Use ['none'] if benign.",
             },
@@ -87,6 +90,8 @@ class ClassifierResult:
         return self.categories == ["none"] or ("none" in self.categories and len(self.categories) == 1)
 
     def action(self, cfg: Config) -> Action:
+        if "safety_unavailable" in self.categories:
+            return cfg.safety.classifier_failure_action
         if self.is_benign:
             return "allow"
         block = set(cfg.safety.classifier_block_categories)
@@ -112,10 +117,26 @@ class SafetyClassifier:
             self._client = AsyncAnthropic(api_key=api_key)
 
     async def classify(self, text: str, *, label: str = "input") -> ClassifierResult:
-        """Always returns a result; degrades to benign + warning log on failure."""
+        """Always returns a result.
+
+        Local dev can fail open by config; stricter deployments can fail closed
+        without crashing the session.
+        """
         if not self._cfg.safety.enable_classifier or self._client is None:
+            if not self._cfg.safety.enable_classifier:
+                return ClassifierResult(
+                    categories=["none"],
+                    confidence=0.0,
+                    rationale="classifier disabled",
+                )
+            if not self._cfg.safety.classifier_fail_open_in_dev:
+                return ClassifierResult(
+                    categories=["safety_unavailable"],
+                    confidence=1.0,
+                    rationale="classifier unavailable: missing Anthropic API key",
+                )
             return ClassifierResult(categories=["none"], confidence=0.0,
-                                    rationale="classifier disabled or no key")
+                                    rationale="classifier unavailable; fail-open dev mode")
         text = text.strip()
         if not text:
             return ClassifierResult(categories=["none"], confidence=1.0,
@@ -133,6 +154,12 @@ class SafetyClassifier:
             )
         except Exception as e:
             log.warning("classifier_call_failed", err=str(e))
+            if not self._cfg.safety.classifier_fail_open_in_dev:
+                return ClassifierResult(
+                    categories=["safety_unavailable"],
+                    confidence=1.0,
+                    rationale=f"classifier_error: {e!s}",
+                )
             return ClassifierResult(categories=["none"], confidence=0.0,
                                     rationale=f"classifier_error: {e!s}")
         for b in resp.content:

@@ -18,6 +18,7 @@ from ..llm.prompts import render
 from ..llm.routing import route
 from ..logging import get_logger
 from ..models import SystemFeedback, Task, TaskResult
+from ..safety.classifier import SafetyClassifier
 from ..storage.artifacts import write_json, write_text
 from ..storage.repos import feedback as fb_repo
 from ..storage.repos import hypotheses as hyp_repo
@@ -184,11 +185,35 @@ class MetaReviewAgent(BaseAgent):
         text = self._final_text(resp)
         if not text.strip():
             text = "# Research overview\n\n_(No content was generated; see transcripts.)_"
+        safety_extra: dict[str, object] = {}
+        if self.deps.cfg.safety.enable_final_report_gate:
+            assessment = await SafetyClassifier(self.deps.cfg).classify(text, label="final_report")
+            action = assessment.action(self.deps.cfg)
+            safety_extra = {
+                "safety_action": action,
+                "safety_categories": assessment.categories,
+                "safety_confidence": assessment.confidence,
+            }
+            if action in {"block", "quarantine"}:
+                text = (
+                    "# Research overview withheld\n\n"
+                    "The generated overview requires safety review before publication.\n\n"
+                    f"**Safety action.** `{action}`\n\n"
+                    f"**Categories.** `{', '.join(assessment.categories)}`\n\n"
+                    f"**Rationale.** {assessment.rationale[:1000]}\n"
+                )
+            elif action == "warn":
+                text = (
+                    "> Safety review warning: "
+                    f"{', '.join(assessment.categories)} "
+                    f"(confidence {assessment.confidence:.2f}).\n\n"
+                    + text
+                )
 
         overview_path = await write_text(
             self.deps.cfg, session.id, "final", "overview", ".md", text
         )
         return TaskResult(
             kind="final_overview_generated",
-            extra={"overview_path": overview_path, "n_top": len(top)},
+            extra={"overview_path": overview_path, "n_top": len(top), **safety_extra},
         )
