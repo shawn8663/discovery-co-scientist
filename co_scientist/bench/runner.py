@@ -108,6 +108,8 @@ class _CandidateState:
     input_tok: int = 0
     output_tok: int = 0
     latencies_ms: list[int] = field(default_factory=list)
+    n_hypothesis_attempts: int = 0
+    n_duplicate_hypotheses: int = 0
     gold_hits: dict[str, list[HitRecord]] = field(default_factory=dict)
     error: str | None = None
 
@@ -345,6 +347,7 @@ async def _generate_for_candidate(
     agent = GenerationAgent(deps)
 
     for i in range(n_hyps):
+        st.n_hypothesis_attempts += 1
         task = Task(
             id=ids.task_id(), session_id=ses.id,
             created_at=datetime.now(UTC),
@@ -372,6 +375,8 @@ async def _generate_for_candidate(
             continue
         latency = int((time.monotonic() - t0) * 1000)
         st.latencies_ms.append(latency)
+        if not result.hypothesis_ids:
+            st.n_duplicate_hypotheses += 1
 
         for hid in result.hypothesis_ids:
             h = await hyp_repo.fetch(conn, hid)
@@ -428,10 +433,12 @@ async def _generate_direct_for_candidate(
     from ..llm.routing import ModelRoute, thinking_budget_for
     from ..models import CitedPaper, Hypothesis
     from ..storage.artifacts import write_json
+    from ..storage.repos import events as events_repo
     from ..storage.repos import hypotheses as hyp_repo
 
     plan = ses.research_plan
     for i in range(n_hyps):
+        st.n_hypothesis_attempts += 1
         task = Task(
             id=ids.task_id(), session_id=ses.id,
             created_at=datetime.now(UTC),
@@ -569,6 +576,21 @@ async def _generate_direct_for_candidate(
         if not inserted:
             # Same statement already exists from a previous iteration of this
             # candidate — skip (rare but possible if the model is repetitive).
+            st.n_duplicate_hypotheses += 1
+            await events_repo.emit(
+                conn,
+                session_id=ses.id,
+                task_id=task.id,
+                agent="generation",
+                event="hypothesis_duplicate_suppressed",
+                payload={
+                    "reason": "deterministic",
+                    "proposed_hypothesis_id": hid,
+                    "existing_hypothesis_id": hid,
+                    "strategy": "direct",
+                    "candidate_id": st.candidate_id,
+                },
+            )
             continue
 
         st.hypotheses.append(h)
@@ -907,6 +929,12 @@ def _build_summary(
             "model": st.spec.model,
             "mode": st.spec.mode,
             "n_hypotheses": len(st.hypotheses),
+            "n_hypothesis_attempts": st.n_hypothesis_attempts or len(st.hypotheses),
+            "n_duplicate_hypotheses": st.n_duplicate_hypotheses,
+            "duplicate_rate": (
+                st.n_duplicate_hypotheses / st.n_hypothesis_attempts
+                if st.n_hypothesis_attempts else None
+            ),
             "wins": st.wins,
             "losses": st.losses,
             "mean_elo": sum(elos) / len(elos) if elos else None,

@@ -17,6 +17,7 @@ from ..llm.tool_loop import ToolLoopExhausted, run_tool_loop
 from ..models import Review, ReviewScores, Task, TaskResult
 from ..safety.quoting import quote_hypothesis
 from ..storage.artifacts import write_json
+from ..storage.repos import events as events_repo
 from ..storage.repos import hypotheses as hyp_repo
 from ..storage.repos import reviews as rev_repo
 from ..storage.repos import sessions as sess_repo
@@ -48,6 +49,19 @@ class ReflectionAgent(BaseAgent):
             if canonical is not None:
                 await hyp_repo.set_state_if(
                     self.deps.db, h.id, new_state="retired", expected_states=("draft",),
+                )
+                await events_repo.emit(
+                    self.deps.db,
+                    session_id=session.id,
+                    task_id=task.id,
+                    agent="reflection",
+                    event="hypothesis_duplicate_suppressed",
+                    payload={
+                        "reason": "clustered",
+                        "proposed_hypothesis_id": h.id,
+                        "existing_hypothesis_id": canonical.id,
+                        "dedup_cluster": h.dedup_cluster,
+                    },
                 )
                 return TaskResult(
                     kind="noop",

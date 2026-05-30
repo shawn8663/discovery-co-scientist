@@ -8,6 +8,7 @@ import pytest
 
 from co_scientist.models import Hypothesis, ResearchPlan, Session, Transcript
 from co_scientist.obs.metrics import session_metrics, to_dict
+from co_scientist.storage.repos import events as events_repo
 from co_scientist.storage.repos import hypotheses as hyp_repo
 from co_scientist.storage.repos import sessions as sess_repo
 from co_scientist.storage.repos import transcripts as tx_repo
@@ -59,3 +60,54 @@ async def test_session_metrics_to_dict_roundtrips(conn) -> None:
         "n_in_tournament", "cost_usd", "cache_hit_ratio",
     ):
         assert key in d
+
+
+@pytest.mark.asyncio
+async def test_session_metrics_counts_duplicate_rates(conn) -> None:
+    await _seed(conn, session_id="ses_dups")
+    now = datetime.now(UTC)
+    await hyp_repo.insert(conn, Hypothesis(
+        id="hyp_retired", session_id="ses_dups", created_at=now,
+        created_by="generation", strategy="literature",
+        title="retired", summary="s", full_text="f",
+        artifact_path="artifacts/ses_dups/hypotheses/hyp_retired.json",
+        state="retired", dedup_cluster="c0001",
+    ))
+    await events_repo.emit(
+        conn,
+        session_id="ses_dups",
+        task_id=None,
+        agent="generation",
+        event="hypothesis_duplicate_suppressed",
+        payload={"reason": "semantic", "proposed_hypothesis_id": "hyp_sem"},
+    )
+    await events_repo.emit(
+        conn,
+        session_id="ses_dups",
+        task_id=None,
+        agent="generation",
+        event="hypothesis_duplicate_suppressed",
+        payload={"reason": "deterministic", "proposed_hypothesis_id": "hyp_det"},
+    )
+    await events_repo.emit(
+        conn,
+        session_id="ses_dups",
+        task_id=None,
+        agent="reflection",
+        event="hypothesis_duplicate_suppressed",
+        payload={"reason": "clustered", "proposed_hypothesis_id": "hyp_retired"},
+    )
+
+    m = await session_metrics(conn, "ses_dups")
+
+    assert m.n_hypothesis_attempts == 4
+    assert m.n_duplicate_hypotheses == 3
+    assert m.n_deterministic_duplicates == 1
+    assert m.n_semantic_duplicates == 1
+    assert m.n_clustered_duplicates_retired == 1
+    assert m.n_duplicates_reaching_tournament == 0
+    assert m.duplicate_rate == pytest.approx(0.75)
+    assert m.tournament_duplicate_rate == pytest.approx(0.0)
+    d = to_dict(m)
+    assert d["n_duplicate_hypotheses"] == 3
+    assert d["duplicate_rate"] == pytest.approx(0.75)

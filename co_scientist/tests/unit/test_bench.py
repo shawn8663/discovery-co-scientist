@@ -201,6 +201,20 @@ def test_build_summary_handles_no_matches() -> None:
     assert s["candidates"][1]["mean_elo"] is None
 
 
+def test_build_summary_includes_duplicate_rate_metrics() -> None:
+    a = _CandidateState(candidate_id="a", spec=BenchCandidate("candidate", "p", "m"))
+    a.n_hypothesis_attempts = 4
+    a.n_duplicate_hypotheses = 1
+    a.elos = {"h1": 1200.0, "h2": 1210.0, "h3": 1190.0}
+
+    s = _build_summary("bnc", "g", [a], "anthropic", "x", n_matches=0)
+
+    row = s["candidates"][0]
+    assert row["n_hypothesis_attempts"] == 4
+    assert row["n_duplicate_hypotheses"] == 1
+    assert row["duplicate_rate"] == pytest.approx(0.25)
+
+
 # ----------------------------- cross-tournament ----------------------------- #
 
 

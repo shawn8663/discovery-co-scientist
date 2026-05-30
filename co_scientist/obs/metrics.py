@@ -27,6 +27,14 @@ class SessionMetrics:
     n_hypotheses: int = 0
     n_in_tournament: int = 0
     n_reviewed: int = 0
+    n_hypothesis_attempts: int = 0
+    n_duplicate_hypotheses: int = 0
+    n_deterministic_duplicates: int = 0
+    n_semantic_duplicates: int = 0
+    n_clustered_duplicates_retired: int = 0
+    n_duplicates_reaching_tournament: int = 0
+    duplicate_rate: float | None = None
+    tournament_duplicate_rate: float | None = None
     p50_latency_ms: float | None = None
     p95_latency_ms: float | None = None
     tools_called: int = 0
@@ -88,6 +96,65 @@ async def session_metrics(conn: aiosqlite.Connection, session_id: str) -> Sessio
         out.n_hypotheses = row["total"] or 0
         out.n_in_tournament = row["in_tournament"] or 0
         out.n_reviewed = row["reviewed"] or 0
+
+    # Duplicate suppression. Pre-insert deterministic/semantic duplicates are
+    # counted from events; clustered duplicates are visible as retired
+    # hypotheses, with events providing an agent-level breadcrumb.
+    async with conn.execute(
+        """SELECT
+              SUM(CASE WHEN payload LIKE '%"reason": "deterministic"%' THEN 1 ELSE 0 END) AS deterministic,
+              SUM(CASE WHEN payload LIKE '%"reason": "semantic"%' THEN 1 ELSE 0 END) AS semantic,
+              SUM(CASE WHEN payload LIKE '%"reason": "clustered"%' THEN 1 ELSE 0 END) AS clustered
+           FROM events
+          WHERE session_id=? AND event='hypothesis_duplicate_suppressed'""",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is not None:
+        out.n_deterministic_duplicates = row["deterministic"] or 0
+        out.n_semantic_duplicates = row["semantic"] or 0
+        out.n_clustered_duplicates_retired = row["clustered"] or 0
+
+    if out.n_clustered_duplicates_retired == 0:
+        async with conn.execute(
+            """SELECT COUNT(*) AS n FROM hypotheses
+                  WHERE session_id=?
+                    AND state='retired'
+                    AND dedup_cluster IS NOT NULL""",
+            (session_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is not None:
+            out.n_clustered_duplicates_retired = row["n"] or 0
+
+    async with conn.execute(
+        """SELECT COUNT(*) AS n
+             FROM hypotheses AS h
+            WHERE h.session_id=?
+              AND h.dedup_cluster IS NOT NULL
+              AND h.state IN ('in_tournament','pinned')
+              AND EXISTS (
+                    SELECT 1 FROM hypotheses AS other
+                     WHERE other.session_id=h.session_id
+                       AND other.dedup_cluster=h.dedup_cluster
+                       AND other.id != h.id
+              )""",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is not None:
+        out.n_duplicates_reaching_tournament = row["n"] or 0
+
+    out.n_duplicate_hypotheses = (
+        out.n_deterministic_duplicates
+        + out.n_semantic_duplicates
+        + out.n_clustered_duplicates_retired
+    )
+    out.n_hypothesis_attempts = out.n_hypotheses + out.n_deterministic_duplicates + out.n_semantic_duplicates
+    if out.n_hypothesis_attempts > 0:
+        out.duplicate_rate = out.n_duplicate_hypotheses / out.n_hypothesis_attempts
+    if out.n_in_tournament > 0:
+        out.tournament_duplicate_rate = out.n_duplicates_reaching_tournament / out.n_in_tournament
 
     # Latency P50/P95 from transcripts (rough approximation using
     # finished_at - started_at parsed by SQLite's julianday function).
@@ -190,6 +257,14 @@ def to_dict(m: SessionMetrics) -> dict[str, Any]:
         "n_hypotheses": m.n_hypotheses,
         "n_in_tournament": m.n_in_tournament,
         "n_reviewed": m.n_reviewed,
+        "n_hypothesis_attempts": m.n_hypothesis_attempts,
+        "n_duplicate_hypotheses": m.n_duplicate_hypotheses,
+        "n_deterministic_duplicates": m.n_deterministic_duplicates,
+        "n_semantic_duplicates": m.n_semantic_duplicates,
+        "n_clustered_duplicates_retired": m.n_clustered_duplicates_retired,
+        "n_duplicates_reaching_tournament": m.n_duplicates_reaching_tournament,
+        "duplicate_rate": m.duplicate_rate,
+        "tournament_duplicate_rate": m.tournament_duplicate_rate,
         "p50_latency_ms": m.p50_latency_ms,
         "p95_latency_ms": m.p95_latency_ms,
         "tools_called": m.tools_called,

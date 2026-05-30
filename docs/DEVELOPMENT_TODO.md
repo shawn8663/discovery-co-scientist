@@ -23,7 +23,7 @@ before broadening the executable scientific skill surface.
 
 ## P1: Efficiency and Observability
 
-- [ ] Add duplicate-rate metrics.
+- [x] Add duplicate-rate metrics.
   - Count generated hypotheses, deterministic duplicates, semantic duplicates,
     clustered duplicates retired before reflection, and duplicates that reach
     tournament.

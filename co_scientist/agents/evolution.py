@@ -28,6 +28,7 @@ from ..safety.gates import append_safety_review, assess_safety
 from ..safety.quoting import quote_hypothesis
 from ..storage.artifacts import write_json
 from ..storage.repos import embeddings as emb_repo
+from ..storage.repos import events as events_repo
 from ..storage.repos import feedback as fb_repo
 from ..storage.repos import hypotheses as hyp_repo
 from ..storage.repos import reviews as rev_repo
@@ -266,6 +267,19 @@ class EvolutionAgent(BaseAgent):
             dup_id, embed_payload = None, None
 
         if dup_id is not None and dup_id != hid:
+            await events_repo.emit(
+                self.deps.db,
+                session_id=session_id,
+                task_id=None,
+                agent="evolution",
+                event="hypothesis_duplicate_suppressed",
+                payload={
+                    "reason": "semantic",
+                    "proposed_hypothesis_id": hid,
+                    "existing_hypothesis_id": dup_id,
+                    "strategy": strategy,
+                },
+            )
             return dup_id, False
 
         h = Hypothesis(
@@ -280,6 +294,20 @@ class EvolutionAgent(BaseAgent):
             state="draft",
         )
         inserted = await hyp_repo.insert(self.deps.db, h)
+        if not inserted:
+            await events_repo.emit(
+                self.deps.db,
+                session_id=session_id,
+                task_id=None,
+                agent="evolution",
+                event="hypothesis_duplicate_suppressed",
+                payload={
+                    "reason": "deterministic",
+                    "proposed_hypothesis_id": hid,
+                    "existing_hypothesis_id": hid,
+                    "strategy": strategy,
+                },
+            )
 
         if inserted and embed_payload is not None:
             try:

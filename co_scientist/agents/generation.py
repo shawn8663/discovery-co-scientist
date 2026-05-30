@@ -23,6 +23,7 @@ from ..safety.gates import append_safety_review, assess_safety
 from ..safety.quoting import quote_untrusted
 from ..storage.artifacts import write_json
 from ..storage.repos import embeddings as emb_repo
+from ..storage.repos import events as events_repo
 from ..storage.repos import feedback as fb_repo
 from ..storage.repos import hypotheses as hyp_repo
 from ..storage.repos import sessions as sess_repo
@@ -215,6 +216,19 @@ class GenerationAgent(BaseAgent):
 
         if dup_id is not None and dup_id != hid:
             # Found a near-duplicate already in this session: skip insert + skip FAISS.
+            await events_repo.emit(
+                self.deps.db,
+                session_id=session_id,
+                task_id=None,
+                agent="generation",
+                event="hypothesis_duplicate_suppressed",
+                payload={
+                    "reason": "semantic",
+                    "proposed_hypothesis_id": hid,
+                    "existing_hypothesis_id": dup_id,
+                    "strategy": strategy,
+                },
+            )
             return dup_id, False
 
         # Step 2: insert the hypothesis row. Deterministic IDs make this idempotent.
@@ -233,6 +247,20 @@ class GenerationAgent(BaseAgent):
             state="draft",
         )
         inserted = await hyp_repo.insert(self.deps.db, h)
+        if not inserted:
+            await events_repo.emit(
+                self.deps.db,
+                session_id=session_id,
+                task_id=None,
+                agent="generation",
+                event="hypothesis_duplicate_suppressed",
+                payload={
+                    "reason": "deterministic",
+                    "proposed_hypothesis_id": hid,
+                    "existing_hypothesis_id": hid,
+                    "strategy": strategy,
+                },
+            )
 
         # Step 3: only add to FAISS if we actually inserted a new row, so FAISS and
         # the hypotheses table can never disagree (FK in embeddings_meta enforces it).
