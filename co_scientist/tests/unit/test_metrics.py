@@ -152,3 +152,40 @@ async def test_session_metrics_counts_retrieval_cache_and_latency(conn) -> None:
     assert m.retrieval_sources["openalex_search"]["cache_hits"] == 1
     assert m.retrieval_sources["clinical_trials_search"]["cache_misses"] == 1
     assert to_dict(m)["retrieval_cache_hit_ratio"] == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_session_metrics_counts_ranking_cost_and_latency(conn) -> None:
+    await _seed(conn, session_id="ses_ranking_metrics")
+    await events_repo.emit(
+        conn,
+        session_id="ses_ranking_metrics",
+        task_id="task_match",
+        agent="ranking",
+        event="ranking_match_trace",
+        payload={
+            "match_id": "mat_1",
+            "mode": "debate",
+            "model": "claude-sonnet-4-6",
+            "duration_ms": 1250,
+            "input_tokens": 1000,
+            "output_tokens": 200,
+            "cache_read": 300,
+            "cache_write": 0,
+            "cost_usd": 0.04,
+        },
+    )
+
+    m = await session_metrics(conn, "ses_ranking_metrics")
+
+    assert m.ranking_matches_traced == 1
+    assert m.ranking_latency_ms_total == 1250
+    assert m.ranking_latency_ms_avg == pytest.approx(1250)
+    assert m.ranking_cost_usd == pytest.approx(0.04)
+    assert m.ranking_input_tokens == 1000
+    assert m.ranking_output_tokens == 200
+    assert m.ranking_cache_read == 300
+    assert m.ranking_prompt_tokens_per_match == pytest.approx(1300)
+    assert m.ranking_matches_per_dollar == pytest.approx(25)
+    assert m.ranking_models["claude-sonnet-4-6"]["matches"] == 1
+    assert to_dict(m)["ranking_matches_per_dollar"] == pytest.approx(25)

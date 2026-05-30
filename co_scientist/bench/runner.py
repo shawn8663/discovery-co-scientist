@@ -114,6 +114,12 @@ class _CandidateState:
     retrieval_cache_hits: int = 0
     retrieval_cache_misses: int = 0
     retrieval_latency_ms_total: int = 0
+    ranking_matches_traced: int = 0
+    ranking_latency_ms_total: int = 0
+    ranking_cost_usd: float = 0.0
+    ranking_input_tokens: int = 0
+    ranking_cache_read: int = 0
+    ranking_cache_write: int = 0
     gold_hits: dict[str, list[HitRecord]] = field(default_factory=dict)
     error: str | None = None
 
@@ -678,7 +684,7 @@ async def _run_cross_tournament(
             a_hyp = random.choice(a_st.hypotheses)
             b_hyp = random.choice(b_st.hypotheses)
             try:
-                winner, rationale, jcost, jms = await _judge_match(
+                winner, rationale, trace = await _judge_match(
                     judge_llm, judge_cfg, ses, a_hyp, b_hyp
                 )
             except Exception as e:
@@ -694,8 +700,12 @@ async def _run_cross_tournament(
                     winner=None,
                     elo_a_before=a_st.elos[a_hyp.id], elo_b_before=b_st.elos[b_hyp.id],
                     elo_a_after=None, elo_b_after=None,
-                    rationale=rationale, judge_cost_usd=jcost, judge_latency_ms=jms,
+                    rationale=rationale,
+                    judge_cost_usd=trace["cost_usd"],
+                    judge_latency_ms=trace["duration_ms"],
                 )
+                _record_ranking_metrics(a_st, trace)
+                _record_ranking_metrics(b_st, trace)
                 continue
 
             elo_a_before = a_st.elos[a_hyp.id]
@@ -718,8 +728,12 @@ async def _run_cross_tournament(
                 winner=winner,
                 elo_a_before=elo_a_before, elo_b_before=elo_b_before,
                 elo_a_after=upd.elo_a_after, elo_b_after=upd.elo_b_after,
-                rationale=rationale, judge_cost_usd=jcost, judge_latency_ms=jms,
+                rationale=rationale,
+                judge_cost_usd=trace["cost_usd"],
+                judge_latency_ms=trace["duration_ms"],
             )
+            _record_ranking_metrics(a_st, trace)
+            _record_ranking_metrics(b_st, trace)
     return n_matches
 
 
@@ -729,8 +743,8 @@ async def _judge_match(
     ses: Session,
     a: Hypothesis,
     b: Hypothesis,
-) -> tuple[str | None, str, float, int]:
-    """One head-to-head judgement. Returns (winner|None, rationale, cost, latency_ms)."""
+) -> tuple[str | None, str, dict[str, float | int]]:
+    """One head-to-head judgement. Returns (winner|None, rationale, trace)."""
     plan = ses.research_plan
     # Anchor on lower id so cache hits cluster (no effect across providers
     # but keeps the test surface deterministic).
@@ -779,6 +793,14 @@ async def _judge_match(
     t0 = time.monotonic()
     resp = await judge_llm.call(spec, ctx)
     latency = int((time.monotonic() - t0) * 1000)
+    trace = {
+        "duration_ms": latency,
+        "cost_usd": resp.cost_usd,
+        "input_tokens": resp.input_tokens,
+        "output_tokens": resp.output_tokens,
+        "cache_read": resp.cache_read,
+        "cache_write": resp.cache_write,
+    }
 
     # Look for the record_verdict tool call. Fall back to text parsing if
     # the provider didn't honor tool_choice (some smaller models won't).
@@ -807,10 +829,10 @@ async def _judge_match(
         choice = _parse_better_idea(rationale) or 0
 
     if choice not in (1, 2):
-        return None, rationale, resp.cost_usd, latency
+        return None, rationale, trace
     # Map anchor/opponent choice back to (a, b).
     winner = ("a" if choice == 1 else "b") if anchor_is_a else ("b" if choice == 1 else "a")
-    return winner, rationale, resp.cost_usd, latency
+    return winner, rationale, trace
 
 
 def _extract_text(raw) -> str:
@@ -951,6 +973,21 @@ def _build_summary(
                 st.retrieval_latency_ms_total / st.retrieval_tool_calls
                 if st.retrieval_tool_calls else None
             ),
+            "ranking_matches_traced": st.ranking_matches_traced,
+            "ranking_cost_usd": st.ranking_cost_usd,
+            "ranking_matches_per_dollar": (
+                st.ranking_matches_traced / st.ranking_cost_usd
+                if st.ranking_cost_usd else None
+            ),
+            "ranking_prompt_tokens_per_match": (
+                (st.ranking_input_tokens + st.ranking_cache_read + st.ranking_cache_write)
+                / st.ranking_matches_traced
+                if st.ranking_matches_traced else None
+            ),
+            "ranking_latency_ms_avg": (
+                st.ranking_latency_ms_total / st.ranking_matches_traced
+                if st.ranking_matches_traced else None
+            ),
             "wins": st.wins,
             "losses": st.losses,
             "mean_elo": sum(elos) / len(elos) if elos else None,
@@ -1004,3 +1041,12 @@ def _record_retrieval_metrics(st: _CandidateState, tool_calls: list[dict[str, An
             st.retrieval_cache_hits += 1
         elif metadata.get("cache_hit") is False:
             st.retrieval_cache_misses += 1
+
+
+def _record_ranking_metrics(st: _CandidateState, trace: dict[str, float | int]) -> None:
+    st.ranking_matches_traced += 1
+    st.ranking_latency_ms_total += int(trace.get("duration_ms") or 0)
+    st.ranking_cost_usd += float(trace.get("cost_usd") or 0.0)
+    st.ranking_input_tokens += int(trace.get("input_tokens") or 0)
+    st.ranking_cache_read += int(trace.get("cache_read") or 0)
+    st.ranking_cache_write += int(trace.get("cache_write") or 0)

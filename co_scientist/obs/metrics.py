@@ -47,6 +47,17 @@ class SessionMetrics:
     retrieval_latency_ms_total: int = 0
     retrieval_latency_ms_avg: float | None = None
     retrieval_sources: dict[str, dict[str, float | int]] = field(default_factory=dict)
+    ranking_matches_traced: int = 0
+    ranking_latency_ms_total: int = 0
+    ranking_latency_ms_avg: float | None = None
+    ranking_cost_usd: float = 0.0
+    ranking_input_tokens: int = 0
+    ranking_output_tokens: int = 0
+    ranking_cache_read: int = 0
+    ranking_cache_write: int = 0
+    ranking_prompt_tokens_per_match: float | None = None
+    ranking_matches_per_dollar: float | None = None
+    ranking_models: dict[str, dict[str, float | int]] = field(default_factory=dict)
     dead_tasks: int = 0
 
 
@@ -233,6 +244,63 @@ async def session_metrics(conn: aiosqlite.Connection, session_id: str) -> Sessio
     if retrieval_cache_total > 0:
         out.retrieval_cache_hit_ratio = out.retrieval_cache_hits / retrieval_cache_total
 
+    async with conn.execute(
+        """SELECT payload FROM events
+            WHERE session_id=? AND event='ranking_match_trace' AND payload IS NOT NULL""",
+        (session_id,),
+    ) as cur:
+        ranking_trace_rows = await cur.fetchall()
+    for event_row in ranking_trace_rows:
+        try:
+            payload = json.loads(event_row["payload"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        model = str(payload.get("model") or "unknown")
+        duration_ms = int(payload.get("duration_ms") or 0)
+        input_tokens = int(payload.get("input_tokens") or 0)
+        output_tokens = int(payload.get("output_tokens") or 0)
+        cache_read = int(payload.get("cache_read") or 0)
+        cache_write = int(payload.get("cache_write") or 0)
+        cost_usd = float(payload.get("cost_usd") or 0.0)
+
+        out.ranking_matches_traced += 1
+        out.ranking_latency_ms_total += duration_ms
+        out.ranking_cost_usd += cost_usd
+        out.ranking_input_tokens += input_tokens
+        out.ranking_output_tokens += output_tokens
+        out.ranking_cache_read += cache_read
+        out.ranking_cache_write += cache_write
+
+        model_stats = out.ranking_models.setdefault(
+            model,
+            {
+                "matches": 0,
+                "latency_ms_total": 0,
+                "cost_usd": 0.0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read": 0,
+                "cache_write": 0,
+            },
+        )
+        model_stats["matches"] += 1
+        model_stats["latency_ms_total"] += duration_ms
+        model_stats["cost_usd"] += cost_usd
+        model_stats["input_tokens"] += input_tokens
+        model_stats["output_tokens"] += output_tokens
+        model_stats["cache_read"] += cache_read
+        model_stats["cache_write"] += cache_write
+
+    if out.ranking_matches_traced > 0:
+        out.ranking_latency_ms_avg = out.ranking_latency_ms_total / out.ranking_matches_traced
+        out.ranking_prompt_tokens_per_match = (
+            out.ranking_input_tokens + out.ranking_cache_read + out.ranking_cache_write
+        ) / out.ranking_matches_traced
+    if out.ranking_cost_usd > 0:
+        out.ranking_matches_per_dollar = out.ranking_matches_traced / out.ranking_cost_usd
+
     # Dead-lettered tasks
     async with conn.execute(
         "SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND status='dead'",
@@ -338,5 +406,16 @@ def to_dict(m: SessionMetrics) -> dict[str, Any]:
         "retrieval_latency_ms_total": m.retrieval_latency_ms_total,
         "retrieval_latency_ms_avg": m.retrieval_latency_ms_avg,
         "retrieval_sources": m.retrieval_sources,
+        "ranking_matches_traced": m.ranking_matches_traced,
+        "ranking_latency_ms_total": m.ranking_latency_ms_total,
+        "ranking_latency_ms_avg": m.ranking_latency_ms_avg,
+        "ranking_cost_usd": m.ranking_cost_usd,
+        "ranking_input_tokens": m.ranking_input_tokens,
+        "ranking_output_tokens": m.ranking_output_tokens,
+        "ranking_cache_read": m.ranking_cache_read,
+        "ranking_cache_write": m.ranking_cache_write,
+        "ranking_prompt_tokens_per_match": m.ranking_prompt_tokens_per_match,
+        "ranking_matches_per_dollar": m.ranking_matches_per_dollar,
+        "ranking_models": m.ranking_models,
         "dead_tasks": m.dead_tasks,
     }

@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import random
 import re
+import time
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -27,6 +28,9 @@ from ..logging import get_logger
 from ..models import Hypothesis, Task, TaskResult, TournamentMatch
 from ..orchestrator.elo import update_elo
 from ..safety.quoting import quote_hypothesis
+from ..storage.repos import (
+    events as events_repo,
+)
 from ..storage.repos import (
     hypotheses as hyp_repo,
 )
@@ -95,7 +99,7 @@ class RankingAgent(BaseAgent):
         hyp_a, hyp_b, similarity = pair
 
         mode = self._select_mode(hyp_a, hyp_b)
-        verdict, rationale, transcript_id = await self._run_debate(
+        verdict, rationale, transcript_id, trace = await self._run_debate(
             session, hyp_a, hyp_b, mode=mode
         )
         # Derive the round_id deterministically from the task id so that a
@@ -114,6 +118,15 @@ class RankingAgent(BaseAgent):
                 elo_a_before=hyp_a.elo or 1200.0, elo_b_before=hyp_b.elo or 1200.0,
                 rationale=rationale, transcript_id=transcript_id, similarity=similarity,
             ))
+            await self._emit_match_trace(
+                session_id=session.id,
+                task_id=task.id,
+                match_id=mid_invalid,
+                mode="invalid",
+                trace=trace,
+                hyp_a=hyp_a.id,
+                hyp_b=hyp_b.id,
+            )
             log.warning("ranking_invalid_verdict", a=hyp_a.id, b=hyp_b.id)
             return TaskResult(kind="noop", extra={"reason": "unparseable verdict"})
 
@@ -137,6 +150,15 @@ class RankingAgent(BaseAgent):
             elo_a_after=upd.elo_a_after, elo_b_after=upd.elo_b_after,
             rationale=rationale, transcript_id=transcript_id, similarity=similarity,
         ))
+        await self._emit_match_trace(
+            session_id=session.id,
+            task_id=task.id,
+            match_id=mid,
+            mode=mode,
+            trace=trace,
+            hyp_a=hyp_a.id,
+            hyp_b=hyp_b.id,
+        )
         applied = await tourney_repo.apply_elo_update(
             self.deps.db,
             match_id=mid, hyp_a=hyp_a.id, hyp_b=hyp_b.id, winner=verdict,
@@ -301,7 +323,7 @@ class RankingAgent(BaseAgent):
         b: Hypothesis,
         *,
         mode: PairMode,
-    ) -> tuple[Literal["a", "b"] | None, str, str | None]:
+    ) -> tuple[Literal["a", "b"] | None, str, str | None, dict[str, Any]]:
         plan = session.research_plan
         # Anchor on the lower-ID hypothesis so cache hits cluster on it.
         anchor, opponent = (a, b) if a.id <= b.id else (b, a)
@@ -349,11 +371,22 @@ class RankingAgent(BaseAgent):
             session_id=session.id, task_id=None,
             agent="ranking", action="RunTournamentBatch", mode=mode,
         )
+        t0 = time.monotonic()
         resp = await self.deps.llm.call(spec, ctx)
+        trace = {
+            "model": r.model,
+            "duration_ms": int((time.monotonic() - t0) * 1000),
+            "input_tokens": resp.input_tokens,
+            "output_tokens": resp.output_tokens,
+            "cache_read": resp.cache_read,
+            "cache_write": resp.cache_write,
+            "cost_usd": resp.cost_usd,
+            "transcript_id": resp.transcript_id,
+        }
         text = self._final_text(resp)
         choice = _parse_better_idea(text)
         if choice is None:
-            return None, text, resp.transcript_id
+            return None, text, resp.transcript_id, trace
 
         # Map anchor/opponent choice back to (a, b)
         # "1" means anchor, "2" means opponent.
@@ -361,7 +394,33 @@ class RankingAgent(BaseAgent):
             winner: Literal["a", "b"] = "a" if choice == 1 else "b"
         else:
             winner = "b" if choice == 1 else "a"
-        return winner, text, resp.transcript_id
+        return winner, text, resp.transcript_id, trace
+
+    async def _emit_match_trace(
+        self,
+        *,
+        session_id: str,
+        task_id: str,
+        match_id: str,
+        mode: str,
+        trace: dict[str, Any],
+        hyp_a: str,
+        hyp_b: str,
+    ) -> None:
+        await events_repo.emit(
+            self.deps.db,
+            session_id=session_id,
+            task_id=task_id,
+            agent=self.name,
+            event="ranking_match_trace",
+            payload={
+                "match_id": match_id,
+                "mode": mode,
+                "hyp_a": hyp_a,
+                "hyp_b": hyp_b,
+                **trace,
+            },
+        )
 
     async def _best_review(self, hypothesis_id: str) -> str | None:
         rs = await rev_repo.list_for_hypothesis(self.deps.db, hypothesis_id)

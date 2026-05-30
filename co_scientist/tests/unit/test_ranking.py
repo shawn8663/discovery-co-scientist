@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from co_scientist.agents.ranking import RankingAgent, _parse_better_idea
 from co_scientist.config import Config
-from co_scientist.models import Hypothesis
+from co_scientist.llm.anthropic_client import AnthropicResponse
+from co_scientist.models import Hypothesis, ResearchPlan, Session, Task
+from co_scientist.storage.repos import events as events_repo
+from co_scientist.storage.repos import hypotheses as hyp_repo
+from co_scientist.storage.repos import sessions as sess_repo
 
 # ----------------------------- verdict parser ----------------------------- #
 
@@ -96,3 +103,73 @@ def test_nearest_elo_picks_closest() -> None:
 def test_nearest_elo_empty_pool() -> None:
     target = _h(hid="t", elo=1300, matches=0)
     assert _agent()._nearest_elo(target, []) is None
+
+
+@pytest.mark.asyncio
+async def test_ranking_emits_match_trace_event(tmp_cfg, conn) -> None:
+    now = datetime.now(UTC)
+    session = Session(
+        id="ses_ranking_trace",
+        created_at=now,
+        updated_at=now,
+        status="running",
+        research_goal="Compare hypotheses.",
+        research_plan=ResearchPlan(objective="Compare hypotheses."),
+        config_snapshot={},
+        budget_tokens=1000,
+        budget_usd=1.0,
+    )
+    await sess_repo.insert(conn, session)
+    for hid in ("hyp_a", "hyp_b"):
+        await hyp_repo.insert(conn, Hypothesis(
+            id=hid,
+            session_id=session.id,
+            created_at=now,
+            created_by="generation",
+            strategy="literature",
+            title=hid,
+            summary="s",
+            full_text="f",
+            artifact_path=f"artifacts/{session.id}/hypotheses/{hid}.json",
+            state="reviewed",
+        ))
+        await hyp_repo.init_tournament(conn, hid, initial_elo=1200)
+
+    raw = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="Reasoning.\nbetter idea: 1")],
+    )
+    response = AnthropicResponse(
+        raw=raw,
+        transcript_id="trn_rank",
+        cost_usd=0.03,
+        input_tokens=900,
+        output_tokens=150,
+        cache_read=200,
+        cache_write=50,
+    )
+    deps = MagicMock()
+    deps.cfg = tmp_cfg
+    deps.db = conn
+    deps.llm.call = AsyncMock(return_value=response)
+    agent = RankingAgent(deps)
+
+    result = await agent.execute(Task(
+        id="task_rank_trace",
+        session_id=session.id,
+        created_at=now,
+        agent="ranking",
+        action="RunTournamentBatch",
+        payload={"focus": "hyp_a"},
+    ))
+
+    assert result.kind == "tournament_match_complete"
+    recent = await events_repo.recent(conn, session.id, limit=10)
+    event = next(e for e in recent if e["event"] == "ranking_match_trace")
+    assert event["agent"] == "ranking"
+    assert event["payload"]["match_id"] == result.match_ids[0]
+    assert event["payload"]["model"] == tmp_cfg.models.ranking_debate
+    assert event["payload"]["transcript_id"] == "trn_rank"
+    assert event["payload"]["input_tokens"] == 900
+    assert event["payload"]["cache_read"] == 200
+    assert event["payload"]["cost_usd"] == pytest.approx(0.03)
+    assert event["payload"]["duration_ms"] >= 0

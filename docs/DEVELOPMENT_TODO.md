@@ -35,7 +35,7 @@ before broadening the executable scientific skill surface.
   - Record tool latency per retrieval source.
   - Add a small metrics summary to benchmark output.
 
-- [ ] Add ranking cost and latency traces.
+- [x] Add ranking cost and latency traces.
   - Track match duration, model used, prompt/cache/output tokens, and cost.
   - Aggregate matches per dollar and ranking prompt tokens per match.
   - Preserve compatibility with existing batch ranking behavior.
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Start with duplicate-rate metrics, because it directly measures the efficiency
-work already implemented and gives later benchmark/reporting tasks a stable
-signal to track.
+Continue with cluster-aware tournament pairing, because the observability
+metrics now expose enough duplicate and ranking-cost signal to measure whether
+pair selection reduces wasted comparisons.

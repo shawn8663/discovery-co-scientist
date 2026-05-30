@@ -232,6 +232,25 @@ def test_build_summary_includes_retrieval_cache_metrics() -> None:
     assert row["retrieval_latency_ms_avg"] == pytest.approx(30)
 
 
+def test_build_summary_includes_ranking_cost_metrics() -> None:
+    a = _CandidateState(candidate_id="a", spec=BenchCandidate("candidate", "p", "m"))
+    a.ranking_matches_traced = 2
+    a.ranking_cost_usd = 0.5
+    a.ranking_input_tokens = 1000
+    a.ranking_cache_read = 400
+    a.ranking_cache_write = 100
+    a.ranking_latency_ms_total = 3000
+
+    s = _build_summary("bnc", "g", [a], "anthropic", "x", n_matches=2)
+
+    row = s["candidates"][0]
+    assert row["ranking_matches_traced"] == 2
+    assert row["ranking_cost_usd"] == pytest.approx(0.5)
+    assert row["ranking_matches_per_dollar"] == pytest.approx(4)
+    assert row["ranking_prompt_tokens_per_match"] == pytest.approx(750)
+    assert row["ranking_latency_ms_avg"] == pytest.approx(1500)
+
+
 # ----------------------------- cross-tournament ----------------------------- #
 
 
@@ -277,7 +296,14 @@ async def test_cross_tournament_runs_n_matches_per_pair(conn) -> None:
     # Mock the judge: A always wins, B always loses to A, C loses to both.
     async def fake_judge(judge_llm, judge_cfg, ses, a, b):
         winner = "a" if a.id < b.id else "b"
-        return winner, "mock rationale", 0.0001, 50
+        return winner, "mock rationale", {
+            "cost_usd": 0.0001,
+            "duration_ms": 50,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read": 0,
+            "cache_write": 0,
+        }
 
     with patch("co_scientist.bench.runner._judge_match", side_effect=fake_judge):
         n = await _run_cross_tournament(
@@ -332,7 +358,21 @@ async def test_cross_tournament_handles_empty_candidate(conn) -> None:
     )
     await conn.commit()
 
-    with patch("co_scientist.bench.runner._judge_match", new=AsyncMock(return_value=("a", "ok", 0.0, 10))):
+    with patch(
+        "co_scientist.bench.runner._judge_match",
+        new=AsyncMock(return_value=(
+            "a",
+            "ok",
+            {
+                "cost_usd": 0.0,
+                "duration_ms": 10,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read": 0,
+                "cache_write": 0,
+            },
+        )),
+    ):
         n = await _run_cross_tournament(
             conn, "bnc_t2", ses, [good, bad],
             judge_llm=MagicMock(), judge_cfg=cfg, matches_per_pair=2,
@@ -369,7 +409,14 @@ async def test_run_bench_writes_summary_and_status(tmp_cfg) -> None:
 
     # Mock the judge with a stable side: a always wins.
     async def fake_judge(judge_llm, judge_cfg, ses, a, b):
-        return "a", "fake", 0.0, 5
+        return "a", "fake", {
+            "cost_usd": 0.0,
+            "duration_ms": 5,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read": 0,
+            "cache_write": 0,
+        }
 
     tmp_cfg.secrets.OPENROUTER_API_KEY = "fake"
     tmp_cfg.secrets.ANTHROPIC_API_KEY = "fake"
