@@ -6,8 +6,9 @@ All counts roll up from existing tables (transcripts, tournament_matches, etc.)
 
 from __future__ import annotations
 
+import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import aiosqlite
@@ -39,6 +40,13 @@ class SessionMetrics:
     p95_latency_ms: float | None = None
     tools_called: int = 0
     tool_errors: int = 0
+    retrieval_tool_calls: int = 0
+    retrieval_cache_hits: int = 0
+    retrieval_cache_misses: int = 0
+    retrieval_cache_hit_ratio: float | None = None
+    retrieval_latency_ms_total: int = 0
+    retrieval_latency_ms_avg: float | None = None
+    retrieval_sources: dict[str, dict[str, float | int]] = field(default_factory=dict)
     dead_tasks: int = 0
 
 
@@ -181,6 +189,50 @@ async def session_metrics(conn: aiosqlite.Connection, session_id: str) -> Sessio
         out.tools_called = row["tools_called"] or 0
         out.tool_errors = row["tool_errors"] or 0
 
+    async with conn.execute(
+        """SELECT payload FROM events
+            WHERE session_id=? AND event='tool_call' AND payload IS NOT NULL""",
+        (session_id,),
+    ) as cur:
+        tool_event_rows = await cur.fetchall()
+    for event_row in tool_event_rows:
+        try:
+            payload = json.loads(event_row["payload"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        metadata = payload.get("metadata") if isinstance(payload, dict) else None
+        if not isinstance(metadata, dict):
+            continue
+        source = metadata.get("retrieval_source")
+        if not isinstance(source, str) or not source:
+            continue
+        duration_ms = int(payload.get("duration_ms") or 0)
+        hits, misses = _cache_counts(metadata)
+        stats = out.retrieval_sources.setdefault(
+            source,
+            {
+                "calls": 0,
+                "cache_hits": 0,
+                "cache_misses": 0,
+                "latency_ms_total": 0,
+                "latency_ms_avg": 0.0,
+            },
+        )
+        stats["calls"] += 1
+        stats["cache_hits"] += hits
+        stats["cache_misses"] += misses
+        stats["latency_ms_total"] += duration_ms
+        stats["latency_ms_avg"] = stats["latency_ms_total"] / stats["calls"]
+        out.retrieval_tool_calls += 1
+        out.retrieval_cache_hits += hits
+        out.retrieval_cache_misses += misses
+        out.retrieval_latency_ms_total += duration_ms
+    if out.retrieval_tool_calls > 0:
+        out.retrieval_latency_ms_avg = out.retrieval_latency_ms_total / out.retrieval_tool_calls
+    retrieval_cache_total = out.retrieval_cache_hits + out.retrieval_cache_misses
+    if retrieval_cache_total > 0:
+        out.retrieval_cache_hit_ratio = out.retrieval_cache_hits / retrieval_cache_total
+
     # Dead-lettered tasks
     async with conn.execute(
         "SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND status='dead'",
@@ -198,6 +250,16 @@ def _percentile(sorted_values: list[float], p: float) -> float:
         return 0.0
     i = max(0, min(len(sorted_values) - 1, round(p * (len(sorted_values) - 1))))
     return float(sorted_values[i])
+
+
+def _cache_counts(metadata: dict[str, Any]) -> tuple[int, int]:
+    if "cache_hits" in metadata or "cache_misses" in metadata:
+        return int(metadata.get("cache_hits") or 0), int(metadata.get("cache_misses") or 0)
+    if metadata.get("cache_hit") is True:
+        return 1, 0
+    if metadata.get("cache_hit") is False:
+        return 0, 1
+    return 0, 0
 
 
 @dataclass
@@ -269,5 +331,12 @@ def to_dict(m: SessionMetrics) -> dict[str, Any]:
         "p95_latency_ms": m.p95_latency_ms,
         "tools_called": m.tools_called,
         "tool_errors": m.tool_errors,
+        "retrieval_tool_calls": m.retrieval_tool_calls,
+        "retrieval_cache_hits": m.retrieval_cache_hits,
+        "retrieval_cache_misses": m.retrieval_cache_misses,
+        "retrieval_cache_hit_ratio": m.retrieval_cache_hit_ratio,
+        "retrieval_latency_ms_total": m.retrieval_latency_ms_total,
+        "retrieval_latency_ms_avg": m.retrieval_latency_ms_avg,
+        "retrieval_sources": m.retrieval_sources,
         "dead_tasks": m.dead_tasks,
     }

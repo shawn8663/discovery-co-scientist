@@ -13,7 +13,7 @@ scientific skills.
 | --- | --- | --- | --- |
 | Supervisor orchestration | Durable queue follows Supplement 8: generation creates hypotheses, reflection reviews, ranking adds and runs tournament, idle loop schedules ranking/evolution/metareview, final overview runs on termination. | Goal and hypothesis safety checks are not yet first-class gates in the Supervisor flow. | P0 |
 | Agent prompts | Prompt files map closely to Supplement 9 for literature generation, debate generation, ranking, evolution, reflection, and metareview. | Prompt regression tests should assert key required sections and final parser phrases. | P1 |
-| Ranking tournament | Elo, batch ranking, debate mode, and match prioritization are implemented. | Add cost/latency traces per match and duplicate-cluster-aware match selection. | P1 |
+| Ranking tournament | Elo, batch ranking, debate mode, and match prioritization are implemented. Retrieval cache and latency metrics are now exposed for benchmark summaries. | Add cost/latency traces per match and duplicate-cluster-aware match selection. | P1 |
 | Reflection | Full, verification, and observation review modes exist. Clustered duplicate drafts are now retired before full reflection. | Add an explicit cheap initial review before expensive retrieval-heavy review. | P1 |
 | Proximity | Embedding-backed clustering exists, can suppress later clustered duplicates before Reflection spends LLM/tool budget, is scheduled ahead of reflection when enough hypotheses exist to recluster, and now exposes duplicate-rate metrics. | Add cluster-aware tournament pairing. | P1 |
 | Meta-review | System feedback and final overview exist. | Final report now has a configurable safety gate; add UI status for withheld reports. | P0 |

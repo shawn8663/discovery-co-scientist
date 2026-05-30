@@ -41,6 +41,7 @@ class ToolResult:
     error_message: str | None = None
     duration_ms: int = 0
     result_bytes: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable

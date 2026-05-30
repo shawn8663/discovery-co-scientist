@@ -110,6 +110,10 @@ class _CandidateState:
     latencies_ms: list[int] = field(default_factory=list)
     n_hypothesis_attempts: int = 0
     n_duplicate_hypotheses: int = 0
+    retrieval_tool_calls: int = 0
+    retrieval_cache_hits: int = 0
+    retrieval_cache_misses: int = 0
+    retrieval_latency_ms_total: int = 0
     gold_hits: dict[str, list[HitRecord]] = field(default_factory=dict)
     error: str | None = None
 
@@ -375,6 +379,7 @@ async def _generate_for_candidate(
             continue
         latency = int((time.monotonic() - t0) * 1000)
         st.latencies_ms.append(latency)
+        _record_retrieval_metrics(st, result.extra.get("tool_calls", []))
         if not result.hypothesis_ids:
             st.n_duplicate_hypotheses += 1
 
@@ -935,6 +940,17 @@ def _build_summary(
                 st.n_duplicate_hypotheses / st.n_hypothesis_attempts
                 if st.n_hypothesis_attempts else None
             ),
+            "retrieval_tool_calls": st.retrieval_tool_calls,
+            "retrieval_cache_hits": st.retrieval_cache_hits,
+            "retrieval_cache_misses": st.retrieval_cache_misses,
+            "retrieval_cache_hit_ratio": (
+                st.retrieval_cache_hits / (st.retrieval_cache_hits + st.retrieval_cache_misses)
+                if (st.retrieval_cache_hits + st.retrieval_cache_misses) else None
+            ),
+            "retrieval_latency_ms_avg": (
+                st.retrieval_latency_ms_total / st.retrieval_tool_calls
+                if st.retrieval_tool_calls else None
+            ),
             "wins": st.wins,
             "losses": st.losses,
             "mean_elo": sum(elos) / len(elos) if elos else None,
@@ -972,3 +988,19 @@ def _build_summary(
         } if goldset else None,
         "candidates": rows,
     }
+
+
+def _record_retrieval_metrics(st: _CandidateState, tool_calls: list[dict[str, Any]]) -> None:
+    for call in tool_calls:
+        metadata = call.get("metadata")
+        if not isinstance(metadata, dict) or not metadata.get("retrieval_source"):
+            continue
+        st.retrieval_tool_calls += 1
+        st.retrieval_latency_ms_total += int(call.get("duration_ms") or 0)
+        if "cache_hits" in metadata or "cache_misses" in metadata:
+            st.retrieval_cache_hits += int(metadata.get("cache_hits") or 0)
+            st.retrieval_cache_misses += int(metadata.get("cache_misses") or 0)
+        elif metadata.get("cache_hit") is True:
+            st.retrieval_cache_hits += 1
+        elif metadata.get("cache_hit") is False:
+            st.retrieval_cache_misses += 1

@@ -45,6 +45,7 @@ class OpenAlexSearchTool:
                 content=cached,
                 duration_ms=int((time.monotonic() - t0) * 1000),
                 result_bytes=len(str(cached)),
+                metadata={"retrieval_source": self.name, "cache_hit": True},
             )
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -70,6 +71,7 @@ class OpenAlexSearchTool:
             content=payload,
             duration_ms=int((time.monotonic() - t0) * 1000),
             result_bytes=len(str(payload)),
+            metadata={"retrieval_source": self.name, "cache_hit": False},
         )
 
 

@@ -144,6 +144,44 @@ async def test_loop_dispatches_non_terminal_tools_then_continues() -> None:
 
 
 @pytest.mark.asyncio
+async def test_loop_preserves_tool_result_metadata() -> None:
+    """Retrieval tools attach cache metadata that metrics consume later."""
+    from co_scientist.tools.base import ToolResult
+
+    client = MagicMock()
+    client.call = AsyncMock(side_effect=[
+        _fake_response(
+            stop_reason="tool_use",
+            blocks=[{
+                "type": "tool_use", "id": "call_search",
+                "name": "openalex_search", "input": {"query": "AML"},
+            }],
+        ),
+        _fake_response(stop_reason="end_turn", blocks=[{"type": "text", "text": "done"}]),
+    ])
+    registry = MagicMock()
+    registry._cfg = SimpleNamespace()
+    registry.call = AsyncMock(return_value=ToolResult(
+        is_error=False,
+        content={"n": 1},
+        duration_ms=7,
+        result_bytes=12,
+        metadata={"cache_hit": True, "retrieval_source": "openalex_search"},
+    ))
+
+    result = await run_tool_loop(
+        client, spec=_spec(), ctx=_ctx(), registry=registry,
+        max_iters=8, parallel_cap=4, tool_timeout_s=1.0,
+    )
+
+    assert result.tool_calls[0]["metadata"] == {
+        "cache_hit": True,
+        "retrieval_source": "openalex_search",
+    }
+    assert result.tool_calls[0]["result_bytes"] == 12
+
+
+@pytest.mark.asyncio
 async def test_loop_terminates_on_record_review() -> None:
     client = MagicMock()
     client.call = AsyncMock(return_value=_fake_response(

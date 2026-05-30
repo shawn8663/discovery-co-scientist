@@ -142,6 +142,8 @@ async def run_tool_loop(
                     "args": dict(getattr(b, "input", {}) or {}),
                     "is_error": False,
                     "duration_ms": 0,
+                    "result_bytes": 0,
+                    "metadata": {},
                 })
             return ToolLoopResult(
                 response=resp,
@@ -167,6 +169,8 @@ async def run_tool_loop(
                     "args": tu.input,
                     "is_error": r["is_error"],
                     "duration_ms": r.get("duration_ms", 0),
+                    "result_bytes": r.get("result_bytes", 0),
+                    "metadata": r.get("metadata", {}),
                 }
             )
             for u in _extract_urls(r.get("content")):
@@ -235,11 +239,15 @@ async def _dispatch(
             "is_error": True,
             "content": {"error": f"tool {tool_use.name!r} timed out"},
             "duration_ms": int((time.monotonic() - t0) * 1000),
+            "result_bytes": 0,
+            "metadata": {},
         }
     return {
         "is_error": bool(result.is_error),
         "content": _tool_result_content(result),
         "duration_ms": result.duration_ms,
+        "result_bytes": result.result_bytes,
+        "metadata": dict(result.metadata),
     }
 
 

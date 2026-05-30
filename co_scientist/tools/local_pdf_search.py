@@ -46,11 +46,17 @@ class LocalPDFSearchTool:
         workspace = ScientistWorkspace(self._cfg, ctx.session_id)
         artifacts = [a for a in workspace.list() if _looks_like_pdf(a)]
         results: list[dict[str, Any]] = []
+        cache_hits = 0
+        cache_misses = 0
         for artifact in artifacts:
             path = Path(artifact.path)
             if not path.is_file():
                 continue
-            indexed = _read_or_index_pdf(self._cfg, artifact, path)
+            indexed, cache_hit = _read_or_index_pdf(self._cfg, artifact, path)
+            if cache_hit:
+                cache_hits += 1
+            else:
+                cache_misses += 1
             score = _score(indexed["text"], query)
             if score <= 0:
                 continue
@@ -71,6 +77,12 @@ class LocalPDFSearchTool:
             content=payload,
             duration_ms=int((time.monotonic() - t0) * 1000),
             result_bytes=len(json.dumps(payload)),
+            metadata={
+                "retrieval_source": self.name,
+                "cache_hit": cache_misses == 0 and cache_hits > 0,
+                "cache_hits": cache_hits,
+                "cache_misses": cache_misses,
+            },
         )
 
 
@@ -80,7 +92,7 @@ def _looks_like_pdf(artifact: WorkspaceArtifact) -> bool:
     return path.endswith(".pdf") or content_type == "application/pdf"
 
 
-def _read_or_index_pdf(cfg: Config, artifact: WorkspaceArtifact, path: Path) -> dict[str, Any]:
+def _read_or_index_pdf(cfg: Config, artifact: WorkspaceArtifact, path: Path) -> tuple[dict[str, Any], bool]:
     cache_dir = cfg.data_dir / "cache" / "local_pdfs"
     cache_dir.mkdir(parents=True, exist_ok=True)
     stat = path.stat()
@@ -88,7 +100,7 @@ def _read_or_index_pdf(cfg: Config, artifact: WorkspaceArtifact, path: Path) -> 
     cache_path = cache_dir / f"{key}.json"
     if cache_path.exists():
         try:
-            return json.loads(cache_path.read_text())
+            return json.loads(cache_path.read_text()), True
         except json.JSONDecodeError:
             pass
     pages: list[str] = []
@@ -107,7 +119,7 @@ def _read_or_index_pdf(cfg: Config, artifact: WorkspaceArtifact, path: Path) -> 
     tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False))
     tmp.replace(cache_path)
-    return payload
+    return payload, False
 
 
 def _score(text: str, query: str) -> int:

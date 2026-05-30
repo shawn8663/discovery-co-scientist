@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from co_scientist.tools.base import ToolCtx
-from co_scientist.tools.builtins.clinical_trials import _normalize_clinical_trials
+from co_scientist.tools.builtins.clinical_trials import (
+    ClinicalTrialsSearchTool,
+    _normalize_clinical_trials,
+)
 from co_scientist.tools.builtins.openalex import OpenAlexSearchTool, _normalize_openalex
 from co_scientist.tools.cache import RetrievalCache
 from co_scientist.tools.registry import ToolRegistry
@@ -130,3 +133,33 @@ async def test_openalex_uses_retrieval_cache_when_available(tmp_cfg, monkeypatch
 
     assert result.is_error is False
     assert result.content == cached
+    assert result.metadata["cache_hit"] is True
+    assert result.metadata["retrieval_source"] == "openalex_search"
+
+
+async def test_clinical_trials_uses_retrieval_cache_when_available(tmp_cfg, monkeypatch) -> None:
+    args = {"query": "AML", "max_results": 2}
+    cached = {"query": "AML", "n": 1, "results": [{"nct_id": "NCT00000001"}]}
+    RetrievalCache(tmp_cfg, "ses_cache").write("clinical_trials_search", args, cached)
+
+    class ExplodingClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            raise AssertionError("network should not be used on cache hit")
+
+        async def __aexit__(self, *a):
+            return None
+
+    monkeypatch.setattr(
+        "co_scientist.tools.builtins.clinical_trials.httpx.AsyncClient",
+        ExplodingClient,
+    )
+
+    result = await ClinicalTrialsSearchTool().call(args, ToolCtx(cfg=tmp_cfg, session_id="ses_cache"))
+
+    assert result.is_error is False
+    assert result.content == cached
+    assert result.metadata["cache_hit"] is True
+    assert result.metadata["retrieval_source"] == "clinical_trials_search"

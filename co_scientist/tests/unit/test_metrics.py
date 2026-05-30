@@ -111,3 +111,44 @@ async def test_session_metrics_counts_duplicate_rates(conn) -> None:
     d = to_dict(m)
     assert d["n_duplicate_hypotheses"] == 3
     assert d["duplicate_rate"] == pytest.approx(0.75)
+
+
+@pytest.mark.asyncio
+async def test_session_metrics_counts_retrieval_cache_and_latency(conn) -> None:
+    await _seed(conn, session_id="ses_retrieval_metrics")
+    await events_repo.emit(
+        conn,
+        session_id="ses_retrieval_metrics",
+        task_id=None,
+        agent="generation",
+        event="tool_call",
+        payload={
+            "name": "openalex_search",
+            "duration_ms": 20,
+            "metadata": {"retrieval_source": "openalex_search", "cache_hit": True},
+        },
+    )
+    await events_repo.emit(
+        conn,
+        session_id="ses_retrieval_metrics",
+        task_id=None,
+        agent="generation",
+        event="tool_call",
+        payload={
+            "name": "clinical_trials_search",
+            "duration_ms": 40,
+            "metadata": {"retrieval_source": "clinical_trials_search", "cache_hit": False},
+        },
+    )
+
+    m = await session_metrics(conn, "ses_retrieval_metrics")
+
+    assert m.retrieval_tool_calls == 2
+    assert m.retrieval_cache_hits == 1
+    assert m.retrieval_cache_misses == 1
+    assert m.retrieval_cache_hit_ratio == pytest.approx(0.5)
+    assert m.retrieval_latency_ms_total == 60
+    assert m.retrieval_latency_ms_avg == pytest.approx(30)
+    assert m.retrieval_sources["openalex_search"]["cache_hits"] == 1
+    assert m.retrieval_sources["clinical_trials_search"]["cache_misses"] == 1
+    assert to_dict(m)["retrieval_cache_hit_ratio"] == pytest.approx(0.5)

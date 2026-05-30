@@ -11,6 +11,7 @@ from ..config import Config
 from ..llm.provider import LLMProvider
 from ..models import Task, TaskResult
 from ..safety.quoting import SAFETY_PREAMBLE
+from ..storage.repos import events as events_repo
 from ..tools.registry import ToolRegistry
 
 
@@ -62,3 +63,20 @@ class BaseAgent:
             if getattr(block, "type", None) == "text":
                 parts.append(getattr(block, "text", ""))
         return "\n".join(parts).strip()
+
+    async def _emit_tool_call_events(
+        self,
+        *,
+        session_id: str,
+        task_id: str | None,
+        tool_calls: list[dict[str, Any]],
+    ) -> None:
+        for call in tool_calls:
+            await events_repo.emit(
+                self.deps.db,
+                session_id=session_id,
+                task_id=task_id,
+                agent=self.name,
+                event="tool_call",
+                payload=call,
+            )

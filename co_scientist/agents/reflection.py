@@ -124,6 +124,11 @@ class ReflectionAgent(BaseAgent):
         except ToolLoopExhausted as e:
             raise RuntimeError(f"reflection exhausted tool loop: {e}") from e
 
+        await self._emit_tool_call_events(
+            session_id=session.id,
+            task_id=task.id,
+            tool_calls=loop_result.tool_calls,
+        )
         record = self._final_tool_use(loop_result.response, "record_review")
         if record is None:
             raise RuntimeError("Reflection did not call record_review")

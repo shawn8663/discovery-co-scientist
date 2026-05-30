@@ -215,6 +215,23 @@ def test_build_summary_includes_duplicate_rate_metrics() -> None:
     assert row["duplicate_rate"] == pytest.approx(0.25)
 
 
+def test_build_summary_includes_retrieval_cache_metrics() -> None:
+    a = _CandidateState(candidate_id="a", spec=BenchCandidate("candidate", "p", "m"))
+    a.retrieval_tool_calls = 2
+    a.retrieval_cache_hits = 1
+    a.retrieval_cache_misses = 1
+    a.retrieval_latency_ms_total = 60
+
+    s = _build_summary("bnc", "g", [a], "anthropic", "x", n_matches=0)
+
+    row = s["candidates"][0]
+    assert row["retrieval_tool_calls"] == 2
+    assert row["retrieval_cache_hits"] == 1
+    assert row["retrieval_cache_misses"] == 1
+    assert row["retrieval_cache_hit_ratio"] == pytest.approx(0.5)
+    assert row["retrieval_latency_ms_avg"] == pytest.approx(30)
+
+
 # ----------------------------- cross-tournament ----------------------------- #
 
 

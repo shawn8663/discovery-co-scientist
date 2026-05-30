@@ -129,6 +129,11 @@ class GenerationAgent(BaseAgent):
             raise RuntimeError(f"generation exhausted tool loop: {e}") from e
 
         # 2. Extract record_hypothesis from the final assistant message.
+        await self._emit_tool_call_events(
+            session_id=session.id,
+            task_id=task.id,
+            tool_calls=loop_result.tool_calls,
+        )
         record = self._final_tool_use(loop_result.response, "record_hypothesis")
         if record is None:
             raise RuntimeError("Generation did not call record_hypothesis")

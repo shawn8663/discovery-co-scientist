@@ -51,6 +51,16 @@ async def test_local_pdf_search_indexes_workspace_pdf(tmp_path: Path, tmp_cfg) -
     assert hit["title"] == "Uploaded paper"
     assert "KIRA6 inhibits" in hit["text"]
     assert (tmp_cfg.data_dir / "cache" / "local_pdfs").exists()
+    assert result.metadata["cache_hits"] == 0
+    assert result.metadata["cache_misses"] == 1
+
+    cached = await LocalPDFSearchTool(tmp_cfg).call(
+        {"query": "IRE1 alpha AML", "max_results": 5},
+        ToolCtx(cfg=tmp_cfg, session_id="ses_pdf"),
+    )
+
+    assert cached.metadata["cache_hits"] == 1
+    assert cached.metadata["cache_misses"] == 0
 
 
 @pytest.mark.asyncio

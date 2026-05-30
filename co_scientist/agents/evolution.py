@@ -191,6 +191,11 @@ class EvolutionAgent(BaseAgent):
             log.warning("evolution_tool_loop_exhausted", err=str(e))
             return None
 
+        await self._emit_tool_call_events(
+            session_id=session.id,
+            task_id=None,
+            tool_calls=result.tool_calls,
+        )
         record = self._final_tool_use(result.response, "record_hypothesis")
         if record is None:
             log.warning("evolution_no_record")

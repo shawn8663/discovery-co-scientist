@@ -30,7 +30,7 @@ before broadening the executable scientific skill surface.
   - Surface the counts in the benchmark metrics output.
   - Add unit tests around the new counters.
 
-- [ ] Add retrieval latency and cache-hit metrics.
+- [x] Add retrieval latency and cache-hit metrics.
   - Record cache hits/misses for OpenAlex, ClinicalTrials, and local PDFs.
   - Record tool latency per retrieval source.
   - Add a small metrics summary to benchmark output.
