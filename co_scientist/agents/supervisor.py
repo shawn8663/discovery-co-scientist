@@ -44,6 +44,7 @@ from ..orchestrator.termination import (
     should_stop,
     snapshot_top_k,
 )
+from ..safety.gates import assess_safety
 from ..storage import db as db_mod
 from ..storage.artifacts import write_text
 from ..storage.repos import events as events_repo
@@ -60,6 +61,10 @@ from .reflection import ReflectionAgent
 from .schemas import RECORD_RESEARCH_PLAN_TOOL
 
 log = get_logger("supervisor")
+
+
+class SupervisorSafetyError(RuntimeError):
+    """Raised when a research goal is blocked by the safety classifier."""
 
 
 # ----------------------------- public API ----------------------------- #
@@ -83,6 +88,7 @@ class Supervisor:
         conn = await db_mod.connect(self.cfg)
         try:
             if resume_session_id is None:
+                await self._check_research_goal_safety(goal)
                 session = await self._create_session(conn, goal, preferences_text, wall_clock_seconds)
                 bind(session_id=session.id)
                 log.info(
@@ -153,6 +159,26 @@ class Supervisor:
             await conn.close()
 
     # ----------------------------- session bootstrap ----------------------------- #
+
+    async def _check_research_goal_safety(self, goal: str) -> None:
+        assessment = await assess_safety(self.cfg, goal, label="research_goal")
+        if assessment.should_stop:
+            log.warning(
+                "research_goal_safety_blocked",
+                action=assessment.action,
+                categories=assessment.result.categories,
+                confidence=assessment.result.confidence,
+            )
+            raise SupervisorSafetyError(
+                "research goal blocked by safety classifier: "
+                f"{', '.join(assessment.result.categories)}"
+            )
+        if assessment.action == "warn":
+            log.warning(
+                "research_goal_safety_warned",
+                categories=assessment.result.categories,
+                confidence=assessment.result.confidence,
+            )
 
     async def _create_session(
         self,

@@ -24,6 +24,7 @@ from ..llm.routing import route
 from ..llm.tool_loop import ToolLoopExhausted, run_tool_loop
 from ..logging import get_logger
 from ..models import CitedPaper, Hypothesis, Task, TaskResult
+from ..safety.gates import append_safety_review, assess_safety
 from ..safety.quoting import quote_hypothesis
 from ..storage.artifacts import write_json
 from ..storage.repos import embeddings as emb_repo
@@ -215,10 +216,17 @@ class EvolutionAgent(BaseAgent):
         hid = ids.hypothesis_id(session_id, origin, statement)
         summary = (record.get("statement") or "") + "\n\n" + (record.get("mechanism") or "")
         full_text = _render_hypothesis_md(record)
+        safety = await assess_safety(self.deps.cfg, full_text, label="hypothesis")
+        if safety.should_stop:
+            full_text = append_safety_review(full_text, safety)
 
         artifact_path = await write_json(
             self.deps.cfg, session_id, "hypotheses", hid,
-            {"strategy": strategy, "record": record},
+            {
+                "strategy": strategy,
+                "record": record,
+                "safety": safety.artifact(),
+            },
         )
         citations = [
             CitedPaper(
@@ -228,6 +236,27 @@ class EvolutionAgent(BaseAgent):
             for c in record.get("citations", [])
             if isinstance(c, dict) and c.get("url")
         ]
+
+        if safety.should_stop:
+            h = Hypothesis(
+                id=hid, session_id=session_id, created_at=datetime.now(UTC),
+                created_by="evolution", strategy=strategy,        # type: ignore[arg-type]
+                parent_ids=record.get("parent_ids") or [],
+                title=record.get("title", "")[:300],
+                summary=(record.get("statement") or "")[:1000],
+                full_text=full_text,
+                citations=citations,
+                artifact_path=artifact_path,
+                state="quarantined",
+            )
+            await hyp_repo.insert(self.deps.db, h)
+            log.warning(
+                "evolution_hypothesis_safety_quarantined",
+                hypothesis_id=hid,
+                action=safety.action,
+                categories=safety.result.categories,
+            )
+            return hid, False
 
         # Dedup: cheap nearest-neighbour query. Same pattern as Generation.
         try:
