@@ -37,6 +37,9 @@ async def test_session_detail_shows_workspace_artifacts(tmp_cfg, conn) -> None:
 
     assert response.status_code == 200
     assert "Workspace artifacts" in response.text
+    assert 'id="workspace-artifacts"' in response.text
+    assert 'class="artifact-path"' in response.text
+    assert 'data-label="Path"' in response.text
     assert "Assay upload" in response.text
     assert "dataset" in response.text
     assert "inputs/assay.csv" in response.text

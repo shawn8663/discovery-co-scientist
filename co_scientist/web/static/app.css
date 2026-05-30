@@ -16,6 +16,49 @@
 .status-quarantined      { background: #9c2; color: #222; }
 .status-retired          { background: #555; }
 table { font-size: 0.95em; }
+#workspace-artifacts table {
+    table-layout: fixed;
+    width: 100%;
+}
+#workspace-artifacts th:nth-child(1) { width: 8rem; }
+#workspace-artifacts th:nth-child(4) { width: 11rem; }
+.artifact-title,
+.artifact-path,
+.artifact-path code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+@media (max-width: 700px) {
+    #workspace-artifacts table,
+    #workspace-artifacts tbody,
+    #workspace-artifacts tr,
+    #workspace-artifacts td {
+        display: block;
+        width: 100%;
+    }
+    #workspace-artifacts thead {
+        display: none;
+    }
+    #workspace-artifacts tr {
+        border: 1px solid var(--pico-muted-border-color);
+        border-radius: 0.35rem;
+        margin-bottom: 0.75rem;
+        padding: 0.4rem 0.6rem;
+    }
+    #workspace-artifacts td {
+        border-bottom: 0;
+        padding: 0.35rem 0;
+    }
+    #workspace-artifacts td::before {
+        content: attr(data-label);
+        display: block;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: var(--pico-muted-color);
+        margin-bottom: 0.1rem;
+    }
+}
 #events-log li {
     padding: 0.15rem 0.25rem;
     border-bottom: 1px dotted var(--pico-muted-border-color);

@@ -64,7 +64,7 @@
     {% endif %}
 </section>
 
-<section>
+<section id="workspace-artifacts">
     <h2>Workspace artifacts</h2>
     {% if not workspace_artifacts %}
     <p><em>No workspace artifacts yet.</em></p>
@@ -74,10 +74,10 @@
         <tbody>
         {% for artifact in workspace_artifacts %}
         <tr>
-            <td><code>{{ artifact.kind }}</code></td>
-            <td>{{ artifact.title or artifact.id }}</td>
-            <td><code>{{ artifact.path }}</code></td>
-            <td><small>{{ artifact.created_at.isoformat()[:19] }}</small></td>
+            <td data-label="Kind"><code>{{ artifact.kind }}</code></td>
+            <td data-label="Title" class="artifact-title">{{ artifact.title or artifact.id }}</td>
+            <td data-label="Path" class="artifact-path"><code>{{ artifact.path }}</code></td>
+            <td data-label="Created"><small>{{ artifact.created_at.isoformat()[:19] }}</small></td>
         </tr>
         {% endfor %}
         </tbody>
