@@ -224,6 +224,14 @@ class ScienceSkillTool:
                 content={"approval_required": _approval_manifest(self.meta, run_id)},
             )
 
+        missing_secrets = _missing_required_secrets(self._cfg, self.meta.requires_keys)
+        if missing_secrets:
+            return ToolResult(
+                is_error=True,
+                error_message="missing required secrets: " + ", ".join(missing_secrets),
+                content={"missing_required_secrets": missing_secrets},
+            )
+
         env = _sanitized_env(self._cfg, self.meta.requires_keys or [])
         # cwd: per-call tmp under data/tool_runs/<skill>/<run_id>
         cwd = self._cfg.data_dir / "tool_runs" / self.meta.name / run_id
@@ -272,6 +280,7 @@ class ScienceSkillTool:
             **_approval_manifest(self.meta, run_id),
             "cmd": cmd,
             "cwd": str(cwd),
+            "secrets_available": sorted(k for k in self.meta.requires_keys if k in env),
             "started_at": started_at,
             "finished_at": time.time(),
             "returncode": rc,
@@ -357,14 +366,6 @@ _ALLOWED_ENV_KEYS = {
     "LANG",
     "LC_ALL",
     "PYTHONPATH",
-    # API keys downstream scripts might need
-    "ANTHROPIC_API_KEY",
-    "NCBI_API_KEY",
-    "OPENALEX_API_KEY",
-    "OPENAI_API_KEY",
-    "VOYAGE_API_KEY",
-    "TAVILY_API_KEY",
-    "BRAVE_API_KEY",
 }
 
 
@@ -376,20 +377,24 @@ def _sanitized_env(cfg: Config, extra_required: list[str]) -> dict[str, str]:
     for k, v in _os.environ.items():
         if k in allowed:
             env[k] = v
-    # also export any secrets present on the cfg.secrets object
-    for sk in (
-        "ANTHROPIC_API_KEY",
-        "VOYAGE_API_KEY",
-        "OPENAI_API_KEY",
-        "TAVILY_API_KEY",
-        "BRAVE_API_KEY",
-        "NCBI_API_KEY",
-        "OPENALEX_API_KEY",
-    ):
+    # Also export declared secrets present on the cfg.secrets object. Undeclared
+    # API keys are intentionally withheld from skill subprocesses.
+    for sk in set(extra_required):
         val = getattr(cfg.secrets, sk, "")
         if val and sk not in env:
             env[sk] = val
     return env
+
+
+def _missing_required_secrets(cfg: Config, required: list[str]) -> list[str]:
+    import os as _os
+
+    missing: list[str] = []
+    for name in sorted(set(required)):
+        if _os.environ.get(name) or getattr(cfg.secrets, name, ""):
+            continue
+        missing.append(name)
+    return missing
 
 
 def _string_list(value: Any) -> list[str]:

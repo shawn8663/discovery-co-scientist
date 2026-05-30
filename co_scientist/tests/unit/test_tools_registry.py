@@ -9,7 +9,12 @@ import pytest
 
 from co_scientist.tools.base import ToolCtx
 from co_scientist.tools.registry import ToolRegistry
-from co_scientist.tools.science_skills import ScienceSkillTool, discover_skills, parse_skill_md
+from co_scientist.tools.science_skills import (
+    ScienceSkillTool,
+    _sanitized_env,
+    discover_skills,
+    parse_skill_md,
+)
 
 
 def test_registry_discovers_builtins(tmp_cfg) -> None:
@@ -124,6 +129,7 @@ async def test_science_skill_call_captures_provenance(tmp_path: Path, tmp_cfg) -
             description: Emits JSON
             category: analysis
             entrypoint: scripts/run.py
+            required_secrets: ["NCBI_API_KEY"]
             expected_outputs: ["summary_json"]
             ---
             """
@@ -137,6 +143,7 @@ async def test_science_skill_call_captures_provenance(tmp_path: Path, tmp_cfg) -
     meta = parse_skill_md(sk)
     assert meta is not None
     tool = ScienceSkillTool(tmp_cfg, meta)
+    tmp_cfg.secrets.NCBI_API_KEY = "ncbi-secret-value"
 
     result = await tool.call(
         {"args": {"x": 1}},
@@ -148,7 +155,11 @@ async def test_science_skill_call_captures_provenance(tmp_path: Path, tmp_cfg) -
     provenance = result.content["provenance"]
     assert provenance["run_id"] == "run_1"
     assert provenance["category"] == "analysis"
-    assert Path(provenance["cwd"], "provenance.json").exists()
+    provenance_path = Path(provenance["cwd"], "provenance.json")
+    assert provenance_path.exists()
+    provenance_text = provenance_path.read_text()
+    assert '"secrets_available": [\n    "NCBI_API_KEY"\n  ]' in provenance_text
+    assert "ncbi-secret-value" not in provenance_text
     workspace_entries = tmp_cfg.data_dir / "workspaces" / "ses_tool" / "manifest.json"
     assert workspace_entries.exists()
 
@@ -179,3 +190,46 @@ async def test_science_skill_approval_required_policy_blocks_risky_tool(tmp_path
 
     assert result.is_error is True
     assert result.content["approval_required"]["network_access"] is True
+
+
+def test_science_skill_env_injects_only_declared_secrets(monkeypatch, tmp_cfg) -> None:
+    monkeypatch.setenv("NCBI_API_KEY", "ncbi-env")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-env")
+    tmp_cfg.secrets.OPENALEX_API_KEY = "openalex-cfg"
+
+    env = _sanitized_env(tmp_cfg, ["NCBI_API_KEY", "OPENALEX_API_KEY"])
+
+    assert env["NCBI_API_KEY"] == "ncbi-env"
+    assert env["OPENALEX_API_KEY"] == "openalex-cfg"
+    assert "OPENAI_API_KEY" not in env
+
+
+@pytest.mark.asyncio
+async def test_science_skill_missing_declared_secret_fails_before_execution(
+    tmp_path: Path, tmp_cfg, monkeypatch
+) -> None:
+    sk = tmp_path / "skill"
+    (sk / "scripts").mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        dedent(
+            """\
+            ---
+            name: needs_secret
+            description: Needs a secret
+            entrypoint: scripts/run.py
+            required_secrets: ["CO_SCIENTIST_TEST_MISSING_KEY"]
+            ---
+            """
+        )
+    )
+    marker = tmp_path / "should_not_exist"
+    (sk / "scripts" / "run.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n")
+    monkeypatch.delenv("CO_SCIENTIST_TEST_MISSING_KEY", raising=False)
+    meta = parse_skill_md(sk)
+    assert meta is not None
+
+    result = await ScienceSkillTool(tmp_cfg, meta).call({}, ToolCtx(cfg=tmp_cfg, run_id="run_missing"))
+
+    assert result.is_error is True
+    assert result.content == {"missing_required_secrets": ["CO_SCIENTIST_TEST_MISSING_KEY"]}
+    assert not marker.exists()

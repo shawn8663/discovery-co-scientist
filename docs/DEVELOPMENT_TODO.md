@@ -66,7 +66,7 @@ before broadening the executable scientific skill surface.
   - Verify parser failures do not crash sessions.
   - Verify path traversal is rejected for local project files.
 
-- [ ] Tighten science-skill secret injection.
+- [x] Tighten science-skill secret injection.
   - Inject only skill-declared `required_secrets`.
   - Log which secret names were made available without logging secret values.
   - Add tests for missing, allowed, and disallowed secret access.
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with science-skill secret injection, because malformed retrieval
-inputs are now covered and executable skills need least-privilege secret
-handling before broader skill packs are added.
+Continue with visible approval gates for risky skill runs, because skills now
+receive only declared secrets and risky executions need an explicit local
+approval path before they run.
