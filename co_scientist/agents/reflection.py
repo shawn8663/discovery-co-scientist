@@ -43,6 +43,22 @@ class ReflectionAgent(BaseAgent):
         if kind != "full":
             raise NotImplementedError(f"reflection kind {kind!r} lands in a later milestone")
 
+        if h.state == "draft":
+            canonical = await hyp_repo.active_cluster_canonical(self.deps.db, h)
+            if canonical is not None:
+                await hyp_repo.set_state_if(
+                    self.deps.db, h.id, new_state="retired", expected_states=("draft",),
+                )
+                return TaskResult(
+                    kind="noop",
+                    hypothesis_ids=[h.id],
+                    extra={
+                        "reason": "duplicate_cluster_suppressed",
+                        "canonical_hypothesis_id": canonical.id,
+                        "dedup_cluster": h.dedup_cluster,
+                    },
+                )
+
         prompt = render(
             "reflection.full",
             goal=session.research_plan.objective,

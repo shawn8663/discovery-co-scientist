@@ -83,6 +83,27 @@ async def list_for_session(
     return [_row_to_hyp(r) for r in rows]
 
 
+async def active_cluster_canonical(
+    conn: aiosqlite.Connection, h: Hypothesis
+) -> Hypothesis | None:
+    """Return the earliest active member of h's dedup cluster, if it is not h."""
+    if not h.dedup_cluster:
+        return None
+    async with conn.execute(
+        """SELECT * FROM hypotheses
+              WHERE session_id=?
+                AND dedup_cluster=?
+                AND state IN ('draft','reviewed','in_tournament','pinned')
+              ORDER BY created_at ASC, id ASC
+              LIMIT 1""",
+        (h.session_id, h.dedup_cluster),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None or row["id"] == h.id:
+        return None
+    return _row_to_hyp(row)
+
+
 async def top_by_elo(
     conn: aiosqlite.Connection, session_id: str, k: int = 10
 ) -> list[Hypothesis]:
