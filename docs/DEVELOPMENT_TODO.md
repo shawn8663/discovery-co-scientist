@@ -88,7 +88,7 @@ before broadening the executable scientific skill surface.
     ranking schedules tournament batches, and idle flow schedules evolution and
     meta-review under expected conditions.
 
-- [ ] Add Supplement 9 prompt contract tests.
+- [x] Add Supplement 9 prompt contract tests.
   - Assert required sections exist in generation, reflection, ranking,
     evolution, meta-review, and final overview prompts.
   - Assert parser-required terminal tool names appear where needed.
@@ -143,5 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with Supplement 9 prompt contract tests, because the orchestration
-handoffs are now pinned and the prompt/parser contracts need the same guardrails.
+Continue with the AML-style regression benchmark report, because orchestration
+and prompt contracts are now guarded and benchmark outputs should summarize the
+quality, cost, latency, duplicate, retrieval, and recall signals already added.
