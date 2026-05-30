@@ -26,9 +26,12 @@ def test_quote_untrusted_strips_forged_close_tags() -> None:
     # The forged close tag must not appear in the body (it'd let injection escape).
     body = out.split("\n", 1)[1].rsplit("\n", 1)[0]
     assert "</UNTRUSTED_SOURCE_END>" not in body
-    # Line-leading SYSTEM:/INSTRUCTION: prefixes are softened
-    assert "[SYSTEM:" in out or "[\nSYSTEM:" in out
-    assert "[INSTRUCTION:" in out or "[\nINSTRUCTION:" in out
+    # Line-leading SYSTEM:/INSTRUCTION: prefixes are softened without
+    # preserving the raw directive token + colon.
+    assert "[SYSTEM directive]" in out
+    assert "[INSTRUCTION directive]" in out
+    assert "SYSTEM:" not in body
+    assert "INSTRUCTION:" not in body
 
 
 def test_quote_untrusted_leaves_legitimate_mid_line_text_alone() -> None:

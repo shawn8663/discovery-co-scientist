@@ -57,7 +57,7 @@ before broadening the executable scientific skill surface.
 
 ## P1: Safety and Security
 
-- [ ] Add prompt-injection fixtures for retrieved content.
+- [x] Add prompt-injection fixtures for retrieved content.
   - Cover malicious abstracts, markdown, HTML, and local PDF text.
   - Assert untrusted content remains quoted and cannot alter agent instructions.
 
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with prompt-injection fixtures, because the main efficiency items are
-now in place and the next roadmap block hardens retrieved, fetched, and local
-document content before expanding the scientific skill surface.
+Continue with oversized-download and local-PDF safety tests, because untrusted
+content is now quoted before it re-enters the model and the next risk is
+unsafe or malformed retrieval inputs.

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..ids import tool_run_id
+from ..safety.quoting import quote_untrusted
 from ..tools.base import ToolCtx
 from ..tools.registry import ToolRegistry
 from .anthropic_client import AgentCallSpec, AnthropicClient, AnthropicResponse, CallContext
@@ -259,10 +260,16 @@ def _tool_result_content(result) -> Any:
 
 def _tool_result_block(tool_use, r: dict[str, Any]) -> dict[str, Any]:
     body = r["content"]
+    content = _content_to_text(body)
+    if not r["is_error"]:
+        content = quote_untrusted(
+            content,
+            id_=f"tool:{getattr(tool_use, 'name', 'unknown')}:{tool_use.id}",
+        )
     return {
         "type": "tool_result",
         "tool_use_id": tool_use.id,
-        "content": _content_to_text(body),
+        "content": content,
         "is_error": r["is_error"],
     }
 

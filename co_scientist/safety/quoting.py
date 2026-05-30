@@ -19,23 +19,29 @@ import re
 
 _OPEN_RE = re.compile(r"</?UNTRUSTED_SOURCE(?:_END)?[^>]*>", re.IGNORECASE)
 _HYP_RE = re.compile(r"</?HYPOTHESIS_TEXT(?:_END)?[^>]*>", re.IGNORECASE)
-# Match only at start-of-string OR after a newline — these are the line-leading
-# injection prefixes ("INSTRUCTION:") that imitate system instructions. We
-# explicitly do NOT match mid-line "Important: ..." patterns that show up
-# legitimately in scientific abstracts.
+# Match injection prefixes ("INSTRUCTION:", "YOU ARE NOW:") that imitate
+# system instructions. We intentionally keep this list narrow so legitimate
+# scientific prose such as "Important: this finding..." is not mangled.
 _DANGER_PREFIX_RE = re.compile(
-    r"(?:^|\n)\s*(SYSTEM|INSTRUCTION|IGNORE\s+PREVIOUS|YOU\s+ARE\s+NOW)\s*:",
+    r"\b(SYSTEM|INSTRUCTION|IGNORE\s+PREVIOUS|YOU\s+ARE\s+NOW)\s*:",
     re.IGNORECASE,
 )
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 def _strip_dangerous(text: str) -> str:
     # Remove any pre-existing closing/opening tags so a forged block can't escape early.
     text = _OPEN_RE.sub("", text)
     text = _HYP_RE.sub("", text)
-    # Soften injection-style prefixes anywhere they appear.
-    text = _DANGER_PREFIX_RE.sub(lambda m: "[" + m.group(0).rstrip() + "]", text)
+    # Soften injection-style prefixes anywhere they appear without preserving
+    # the exact directive token + colon pattern.
+    text = _DANGER_PREFIX_RE.sub(_soften_directive, text)
     return text
+
+
+def _soften_directive(match: re.Match[str]) -> str:
+    label = _WHITESPACE_RE.sub(" ", match.group(1)).upper()
+    return f"[{label} directive]"
 
 
 def short_hash(text: str) -> str:
