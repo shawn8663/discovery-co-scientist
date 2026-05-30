@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from ..base import ToolCtx, ToolResult
+from ..cache import RetrievalCache
 
 CLINICAL_TRIALS_URL = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -37,6 +38,14 @@ class ClinicalTrialsSearchTool:
         n = int(args.get("max_results") or 10)
         if not query:
             return ToolResult(is_error=True, error_message="empty query")
+        cache_args = {"query": query, "max_results": n}
+        cached = RetrievalCache(ctx.cfg, ctx.session_id).read(self.name, cache_args)
+        if cached is not None:
+            return ToolResult(
+                content=cached,
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                result_bytes=len(str(cached)),
+            )
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
@@ -53,6 +62,7 @@ class ClinicalTrialsSearchTool:
             return ToolResult(is_error=True, error_message=f"clinical_trials failed: {e}")
 
         payload = {"query": query, "n": len(records), "results": records}
+        RetrievalCache(ctx.cfg, ctx.session_id).write(self.name, cache_args, payload)
         return ToolResult(
             content=payload,
             duration_ms=int((time.monotonic() - t0) * 1000),

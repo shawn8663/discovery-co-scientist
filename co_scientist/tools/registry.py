@@ -15,6 +15,7 @@ from .builtins.clinical_trials import ClinicalTrialsSearchTool
 from .builtins.europe_pmc import EuropePMCSearchTool
 from .builtins.openalex import OpenAlexSearchTool
 from .builtins.pubmed import PubmedSearchTool
+from .local_pdf_search import LocalPDFSearchTool
 from .science_skills import ScienceSkillTool, discover_skills
 from .web_fetch import WebFetchTool
 from .web_search import WebSearchTool
@@ -24,12 +25,14 @@ from .web_search import WebSearchTool
 AGENT_TOOLS: dict[str, set[str]] = {
     "generation": {
         "web_search", "web_fetch",
+        "local_pdf_search",
         "pubmed_search", "arxiv_search", "europe_pmc_search",
         "openalex_search", "clinical_trials_search",
         "literature_*",   # any science-skills literature_* tools
     },
     "reflection": {
         "web_search", "web_fetch",
+        "local_pdf_search",
         "pubmed_search", "arxiv_search", "europe_pmc_search",
         "openalex_search", "clinical_trials_search",
         "literature_*",
@@ -38,6 +41,7 @@ AGENT_TOOLS: dict[str, set[str]] = {
     "ranking": set(),                # no tools mid-debate
     "evolution": {
         "web_search", "web_fetch",
+        "local_pdf_search",
         "pubmed_search", "arxiv_search", "europe_pmc_search",
         "openalex_search", "clinical_trials_search",
         "literature_*",
@@ -56,6 +60,7 @@ class ToolRegistry:
         # Built-ins
         for t in (
             WebFetchTool(self._cfg),
+            LocalPDFSearchTool(self._cfg),
             PubmedSearchTool(self._cfg),
             ArxivSearchTool(),
             EuropePMCSearchTool(),
