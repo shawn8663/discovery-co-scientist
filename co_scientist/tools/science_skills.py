@@ -326,6 +326,20 @@ class ScienceSkillTool:
             "safety_level": self.meta.safety_level,
             "cwd": str(cwd),
         }
+        if ctx.session_id is not None:
+            from ..workspace import ScientistWorkspace
+
+            ScientistWorkspace(self._cfg, ctx.session_id).add_artifact(
+                kind="tool_run",
+                path=cwd,
+                title=f"{self.meta.name} run",
+                provenance=manifest,
+                metadata={
+                    "category": self.meta.category,
+                    "expected_outputs": self.meta.expected_outputs,
+                    "returncode": rc,
+                },
+            )
         return ToolResult(
             content=out_content,
             duration_ms=int((time.monotonic() - t0) * 1000),

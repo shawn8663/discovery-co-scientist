@@ -37,6 +37,7 @@ from ..storage.repos import hypotheses as hyp_repo
 from ..storage.repos import reviews as rev_repo
 from ..storage.repos import sessions as sess_repo
 from ..storage.repos import transcripts as tx_repo
+from ..workspace import ScientistWorkspace
 from .sanitize import render_markdown
 
 log = get_logger("web")
@@ -111,6 +112,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             hyps = await hyp_repo.list_for_session(conn, session_id)
             recent_matches = await _recent_matches(conn, session_id, limit=20)
             usage = await tx_repo.usage_summary(conn, session_id)
+            artifacts = ScientistWorkspace(cfg, session_id).list()
             return TEMPLATES.TemplateResponse(
                 request,
                 "session_detail.html",
@@ -119,6 +121,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     "hypotheses": sorted(hyps, key=lambda h: -(h.elo or 0)),
                     "recent_matches": recent_matches,
                     "usage": usage,
+                    "workspace_artifacts": artifacts,
                 },
             )
         finally:

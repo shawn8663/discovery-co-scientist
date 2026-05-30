@@ -65,6 +65,27 @@
 </section>
 
 <section>
+    <h2>Workspace artifacts</h2>
+    {% if not workspace_artifacts %}
+    <p><em>No workspace artifacts yet.</em></p>
+    {% else %}
+    <table>
+        <thead><tr><th>Kind</th><th>Title</th><th>Path</th><th>Created</th></tr></thead>
+        <tbody>
+        {% for artifact in workspace_artifacts %}
+        <tr>
+            <td><code>{{ artifact.kind }}</code></td>
+            <td>{{ artifact.title or artifact.id }}</td>
+            <td><code>{{ artifact.path }}</code></td>
+            <td><small>{{ artifact.created_at.isoformat()[:19] }}</small></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</section>
+
+<section>
     <h2>Recent matches</h2>
     {% if not recent_matches %}
     <p><em>No tournament matches yet.</em></p>

@@ -128,7 +128,10 @@ async def test_science_skill_call_captures_provenance(tmp_path: Path, tmp_cfg) -
     assert meta is not None
     tool = ScienceSkillTool(tmp_cfg, meta)
 
-    result = await tool.call({"args": {"x": 1}}, ToolCtx(cfg=tmp_cfg, run_id="run_1"))
+    result = await tool.call(
+        {"args": {"x": 1}},
+        ToolCtx(cfg=tmp_cfg, session_id="ses_tool", run_id="run_1"),
+    )
 
     assert result.is_error is False
     assert result.content["result"]["ok"] is True
@@ -136,6 +139,8 @@ async def test_science_skill_call_captures_provenance(tmp_path: Path, tmp_cfg) -
     assert provenance["run_id"] == "run_1"
     assert provenance["category"] == "analysis"
     assert Path(provenance["cwd"], "provenance.json").exists()
+    workspace_entries = tmp_cfg.data_dir / "workspaces" / "ses_tool" / "manifest.json"
+    assert workspace_entries.exists()
 
 
 @pytest.mark.asyncio
