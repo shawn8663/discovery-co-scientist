@@ -34,7 +34,14 @@ async def _make_session(conn) -> Session:
     return session
 
 
-async def _insert_hypothesis(conn, session_id: str, index: int) -> str:
+async def _insert_hypothesis(
+    conn,
+    session_id: str,
+    index: int,
+    *,
+    state: str = "draft",
+    matches_played: int = 0,
+) -> str:
     hid = ids.hypothesis_id(session_id, "generation/literature", f"hypothesis {index}")
     await hyp_repo.insert(
         conn,
@@ -48,7 +55,8 @@ async def _insert_hypothesis(conn, session_id: str, index: int) -> str:
             summary=f"Summary {index}",
             full_text=f"Full text {index}",
             artifact_path=f"artifacts/{session_id}/hypotheses/{hid}.json",
-            state="draft",
+            state=state,  # type: ignore[arg-type]
+            matches_played=matches_played,
         ),
     )
     return hid
@@ -167,6 +175,118 @@ async def test_low_promise_screen_review_skips_full_reflection(tmp_cfg, conn) ->
         row = await cur.fetchone()
 
     assert row["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_full_review_schedules_ranking_add_to_tournament(tmp_cfg, conn) -> None:
+    session = await _make_session(conn)
+    hypothesis_id = await _insert_hypothesis(conn, session.id, 0)
+
+    await Supervisor(tmp_cfg)._apply_follow_ups(
+        conn,
+        session,
+        Task(
+            id=ids.task_id(),
+            session_id=session.id,
+            created_at=_now(),
+            agent="reflection",
+            action="ReviewHypothesis",
+            target_id=hypothesis_id,
+            payload={"kind": "full"},
+        ),
+        TaskResult(
+            kind="review_completed",
+            hypothesis_ids=[hypothesis_id],
+            extra={"kind": "full"},
+        ),
+    )
+
+    async with conn.execute(
+        "SELECT agent, action, target_id, payload, idempotency_key FROM tasks WHERE session_id=?",
+        (session.id,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    assert row["agent"] == "ranking"
+    assert row["action"] == "AddToTournament"
+    assert row["target_id"] == hypothesis_id
+    assert json.loads(row["payload"]) == {}
+    assert row["idempotency_key"] == f"{hypothesis_id}::ranking::add"
+
+
+@pytest.mark.asyncio
+async def test_add_to_tournament_schedules_focused_ranking_batch(tmp_cfg, conn) -> None:
+    session = await _make_session(conn)
+    hypothesis_id = await _insert_hypothesis(conn, session.id, 0)
+
+    await Supervisor(tmp_cfg)._apply_follow_ups(
+        conn,
+        session,
+        Task(
+            id=ids.task_id(),
+            session_id=session.id,
+            created_at=_now(),
+            agent="ranking",
+            action="AddToTournament",
+            target_id=hypothesis_id,
+        ),
+        TaskResult(kind="added_to_tournament", hypothesis_ids=[hypothesis_id]),
+    )
+
+    async with conn.execute(
+        "SELECT agent, action, payload, idempotency_key FROM tasks WHERE session_id=?",
+        (session.id,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    assert row["agent"] == "ranking"
+    assert row["action"] == "RunTournamentBatch"
+    assert json.loads(row["payload"]) == {"focus": hypothesis_id}
+    assert row["idempotency_key"] == f"{hypothesis_id}::ranking::focus_batch"
+
+
+@pytest.mark.asyncio
+async def test_idle_flow_schedules_ranking_evolution_and_metareview(tmp_cfg, conn) -> None:
+    session = await _make_session(conn)
+    hyp_ids = [
+        await _insert_hypothesis(
+            conn,
+            session.id,
+            i,
+            state="in_tournament",
+            matches_played=3,
+        )
+        for i in range(20)
+    ]
+    now = _now().isoformat()
+    for i in range(50):
+        await conn.execute(
+            """INSERT INTO tournament_matches(
+                   id, session_id, created_at, hyp_a, hyp_b, mode, winner,
+                   elo_a_before, elo_b_before, elo_a_after, elo_b_after)
+               VALUES (?, ?, ?, ?, ?, 'pairwise', 'a', 1200, 1200, 1216, 1184)""",
+            (f"mat_s8_{i}", session.id, now, hyp_ids[0], hyp_ids[1]),
+        )
+    await conn.commit()
+
+    n = await Supervisor(tmp_cfg)._decide_next_steps(conn, session)
+
+    assert n == 3
+    async with conn.execute(
+        "SELECT agent, action, payload FROM tasks WHERE session_id=? ORDER BY priority ASC",
+        (session.id,),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    assert [(row["agent"], row["action"]) for row in rows] == [
+        ("evolution", "EvolveTopHypotheses"),
+        ("ranking", "RunTournamentBatch"),
+        ("metareview", "GenerateSystemFeedback"),
+    ]
+    assert json.loads(rows[0]["payload"]) == {
+        "top_k": 5,
+        "strategies": ["combine", "simplify", "out_of_box"],
+    }
 
 
 @pytest.mark.asyncio

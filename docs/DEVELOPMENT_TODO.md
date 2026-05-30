@@ -83,7 +83,7 @@ before broadening the executable scientific skill surface.
 
 ## P1: Paper Fidelity and Regression Benchmarks
 
-- [ ] Add Supplement 8 orchestration tests.
+- [x] Add Supplement 8 orchestration tests.
   - Assert generation schedules reflection, reflection schedules ranking,
     ranking schedules tournament batches, and idle flow schedules evolution and
     meta-review under expected conditions.
@@ -143,6 +143,5 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with Supplement 8 orchestration tests, because the P1 efficiency and
-safety/security items are now complete and the next block verifies paper
-fidelity.
+Continue with Supplement 9 prompt contract tests, because the orchestration
+handoffs are now pinned and the prompt/parser contracts need the same guardrails.
