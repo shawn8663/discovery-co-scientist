@@ -40,7 +40,7 @@ before broadening the executable scientific skill surface.
   - Aggregate matches per dollar and ranking prompt tokens per match.
   - Preserve compatibility with existing batch ranking behavior.
 
-- [ ] Add cluster-aware tournament pairing.
+- [x] Add cluster-aware tournament pairing.
   - Avoid pairing hypotheses from the same dedup cluster when alternatives exist.
   - Prefer cross-cluster comparisons for low-match hypotheses.
   - Add regression tests for same-cluster avoidance and fallback behavior.
@@ -143,6 +143,6 @@ before broadening the executable scientific skill surface.
 
 ## Suggested Next Implementation Slice
 
-Continue with cluster-aware tournament pairing, because the observability
-metrics now expose enough duplicate and ranking-cost signal to measure whether
-pair selection reduces wasted comparisons.
+Continue with cheap first-pass Reflection, because cross-cluster tournament
+selection now reduces wasted comparisons and the next largest cost lever is
+skipping expensive retrieval-heavy reviews for weak hypotheses.

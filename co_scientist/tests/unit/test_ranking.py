@@ -53,13 +53,20 @@ def test_parse_better_idea_word_boundary_excludes_12() -> None:
 
 # ----------------------------- mode selection ----------------------------- #
 
-def _h(*, elo: float, matches: int, hid: str = "hyp_x") -> Hypothesis:
+def _h(
+    *,
+    elo: float,
+    matches: int,
+    hid: str = "hyp_x",
+    cluster: str | None = None,
+) -> Hypothesis:
     return Hypothesis(
         id=hid, session_id="ses", created_at=datetime.now(UTC),
         created_by="generation", strategy="literature",
         title="t", summary="s", full_text="f",
         artifact_path=f"artifacts/ses/hypotheses/{hid}.json",
         elo=elo, matches_played=matches, state="in_tournament",
+        dedup_cluster=cluster,
     )
 
 
@@ -103,6 +110,58 @@ def test_nearest_elo_picks_closest() -> None:
 def test_nearest_elo_empty_pool() -> None:
     target = _h(hid="t", elo=1300, matches=0)
     assert _agent()._nearest_elo(target, []) is None
+
+
+def test_nearest_elo_prefers_cross_cluster_when_available() -> None:
+    target = _h(hid="t", elo=1300, matches=0, cluster="cluster-a")
+    pool = [
+        _h(hid="near_duplicate", elo=1301, matches=5, cluster="cluster-a"),
+        _h(hid="cross_cluster", elo=1450, matches=5, cluster="cluster-b"),
+    ]
+
+    nearest = _agent()._nearest_elo(target, pool)
+
+    assert nearest is not None and nearest.id == "cross_cluster"
+
+
+def test_nearest_elo_falls_back_to_same_cluster_when_needed() -> None:
+    target = _h(hid="t", elo=1300, matches=0, cluster="cluster-a")
+    pool = [
+        _h(hid="only_duplicate", elo=1301, matches=5, cluster="cluster-a"),
+    ]
+
+    nearest = _agent()._nearest_elo(target, pool)
+
+    assert nearest is not None and nearest.id == "only_duplicate"
+
+
+def test_sample_close_elo_prefers_cross_cluster_pairs() -> None:
+    pool = [
+        _h(hid="a", elo=1200, matches=5, cluster="cluster-a"),
+        _h(hid="b", elo=1201, matches=5, cluster="cluster-a"),
+        _h(hid="c", elo=1210, matches=5, cluster="cluster-b"),
+    ]
+
+    pair = _agent()._sample_close_elo(store=None, pool=pool)
+
+    assert pair is not None
+    assert pair[0].dedup_cluster != pair[1].dedup_cluster
+
+
+@pytest.mark.asyncio
+async def test_select_pair_with_focus_prefers_cross_cluster_opponent() -> None:
+    agent = _agent()
+    agent._load_store = AsyncMock(return_value=None)
+    candidates = [
+        _h(hid="focus", elo=1300, matches=0, cluster="cluster-a"),
+        _h(hid="near_duplicate", elo=1301, matches=5, cluster="cluster-a"),
+        _h(hid="cross_cluster", elo=1450, matches=5, cluster="cluster-b"),
+    ]
+
+    pair = await agent._select_pair("ses", candidates, focus_id="focus")
+
+    assert pair is not None
+    assert {pair[0].id, pair[1].id} == {"focus", "cross_cluster"}
 
 
 @pytest.mark.asyncio

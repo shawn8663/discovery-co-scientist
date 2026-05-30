@@ -16,6 +16,7 @@ import random
 import re
 import time
 from datetime import UTC, datetime
+from itertools import combinations
 from typing import Any, Literal
 
 import numpy as np
@@ -226,7 +227,7 @@ class RankingAgent(BaseAgent):
             sorted_by_elo = sorted(candidates, key=lambda h: -(h.elo or 1200))
             top = sorted_by_elo[: max(2, len(candidates) // 2)]
             if len(top) >= 2:
-                a, b = random.sample(top, 2)
+                a, b = self._random_pair(top)
                 return a, b, self._similarity(store, a, b)
         return None
 
@@ -235,7 +236,9 @@ class RankingAgent(BaseAgent):
     ) -> Hypothesis | None:
         if not pool:
             return None
-        return min(pool, key=lambda h: abs((h.elo or 1200) - (target.elo or 1200)))
+        cross_cluster = [h for h in pool if not _same_dedup_cluster(target, h)]
+        eligible = cross_cluster or pool
+        return min(eligible, key=lambda h: abs((h.elo or 1200) - (target.elo or 1200)))
 
     def _sample_close_elo(
         self, store: FaissStore | None, pool: list[Hypothesis]
@@ -262,6 +265,21 @@ class RankingAgent(BaseAgent):
                 break
         if not pairs:
             return None
+        cross_cluster_pairs = [
+            pair for pair in pairs if not _same_dedup_cluster(pair[0], pair[1])
+        ]
+        if cross_cluster_pairs:
+            pair_set = {(pair[0].id, pair[1].id) for pair in cross_cluster_pairs}
+            pairs, weights = zip(
+                *[
+                    (pair, weight)
+                    for pair, weight in zip(pairs, weights, strict=True)
+                    if (pair[0].id, pair[1].id) in pair_set
+                ],
+                strict=True,
+            )
+            pairs = list(pairs)
+            weights = list(weights)
         total = sum(weights)
         if total <= 0:
             return random.choice(pairs)
@@ -272,6 +290,13 @@ class RankingAgent(BaseAgent):
             if cum >= r:
                 return pair
         return pairs[-1]
+
+    def _random_pair(self, pool: list[Hypothesis]) -> tuple[Hypothesis, Hypothesis]:
+        pairs = list(combinations(pool, 2))
+        cross_cluster_pairs = [
+            pair for pair in pairs if not _same_dedup_cluster(pair[0], pair[1])
+        ]
+        return random.choice(cross_cluster_pairs or pairs)
 
     async def _load_store(self, session_id: str) -> FaissStore | None:
         """Instantiate + load the session FAISS store once for pair selection."""
@@ -432,6 +457,10 @@ class RankingAgent(BaseAgent):
 
 
 _VERDICT_DIGIT_RE = re.compile(r"^[\W_]*\**\s*([12])\b")
+
+
+def _same_dedup_cluster(a: Hypothesis, b: Hypothesis) -> bool:
+    return bool(a.dedup_cluster and a.dedup_cluster == b.dedup_cluster)
 
 
 def _parse_better_idea(text: str) -> int | None:
