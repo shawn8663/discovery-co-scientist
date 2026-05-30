@@ -412,7 +412,7 @@ def _headline_findings_section() -> str:
         "",
         "| model | run 1 Δ Elo | run 2 Δ Elo |",
         "| --- | --- | --- |",
-        "| claude-haiku-4.5 | **+180** (1-9 → 10-0) | **−28** (10-2 → 8-4) |",
+        "| claude-haiku-4.5 | **+180** (1-9 → 10-0) | **-28** (10-2 → 8-4) |",
         "| openai-o1 | +43 | +29 |",
         "",
         "Haiku's *raw* record alone flipped 1-9 → 10-2 across the two runs — "
@@ -427,12 +427,12 @@ def _headline_findings_section() -> str:
         "| gemini-2.5-flash | +172 |",
         "| gemini-2.5-pro | +47 |",
         "| gpt-5 | +26 |",
-        "| gemini-2.0-flash | −48 |",
-        "| gemini-3-flash | −36 |",
-        "| gemini-3-pro | −89 |",
+        "| gemini-2.0-flash | -48 |",
+        "| gemini-3-flash | -36 |",
+        "| gemini-3-pro | -89 |",
         "",
         "Within Google alone the 2.5 models gain (+172, +47) and the 3.x "
-        "models lose (−36, −89) — so there is no clean \"provider\" or "
+        "models lose (-36, -89) — so there is no clean \"provider\" or "
         "\"stronger-model\" story; an earlier draft that claimed one was "
         "reading noise. **The only repeatable signal is openai-o1** (pipeline "
         "modestly ahead in both runs). A real per-model verdict needs many "
@@ -454,9 +454,9 @@ def _headline_findings_section() -> str:
         "| ferroptosis | 3 |",
         "",
         "At the **drug** level it's a long tail of one-offs. The only "
-        "compounds proposed more than once are **Itraconazole** (×5, as an "
-        "OXPHOS inhibitor) and **Auranofin** (×2, thioredoxin-reductase). "
-        "**Venetoclax** appears ×6 but as the resistance/combo context, not "
+        "compounds proposed more than once are **Itraconazole** (x5, as an "
+        "OXPHOS inhibitor) and **Auranofin** (x2, thioredoxin-reductase). "
+        "**Venetoclax** appears x6 but as the resistance/combo context, not "
         "the novel candidate. Tellingly, all three recurrent names already "
         "have prior AML evidence — models default to the familiar, which is "
         "exactly what the strict no-prior-evidence prompt forbids (no "
