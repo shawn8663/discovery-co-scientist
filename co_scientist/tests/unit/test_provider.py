@@ -14,7 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from co_scientist.config import Config
-from co_scientist.llm.anthropic_client import AgentCallSpec, CachedBlock, CallContext
+from co_scientist.llm.anthropic_client import (
+    AgentCallSpec,
+    CachedBlock,
+    CallContext,
+    _build_anthropic_request,
+)
 from co_scientist.llm.openai_client import (
     OpenAIClient,
     _adapt_response,
@@ -249,6 +254,41 @@ def test_build_request_translates_any_tool_choice_to_required() -> None:
         tool_choice={"type": "any"},
     )
     assert _build_openai_request(spec)["tool_choice"] == "required"
+
+
+def test_anthropic_request_uses_adaptive_thinking_for_new_claude_models() -> None:
+    spec = AgentCallSpec(
+        route=_route(model="claude-opus-4-7", thinking=8000),
+        user_blocks=[CachedBlock("think carefully")],
+        max_output_tokens=2048,
+    )
+    req = _build_anthropic_request(spec)
+    assert req["thinking"] == {"type": "adaptive"}
+    assert req["output_config"] == {"effort": "high"}
+    assert "budget_tokens" not in str(req["thinking"])
+
+
+def test_anthropic_request_keeps_manual_budget_for_legacy_claude_models() -> None:
+    spec = AgentCallSpec(
+        route=_route(model="claude-opus-4-5", thinking=8000),
+        user_blocks=[CachedBlock("think carefully")],
+        max_output_tokens=2048,
+    )
+    req = _build_anthropic_request(spec)
+    assert req["thinking"] == {"type": "enabled", "budget_tokens": 8000}
+    assert "output_config" not in req
+
+
+def test_anthropic_request_drops_thinking_for_forced_tool_choice() -> None:
+    spec = AgentCallSpec(
+        route=_route(model="claude-opus-4-7", thinking=8000),
+        user_blocks=[CachedBlock("go")],
+        tools=[{"name": "record_hypothesis", "description": "", "input_schema": {}}],
+        tool_choice={"type": "tool", "name": "record_hypothesis"},
+    )
+    req = _build_anthropic_request(spec)
+    assert "thinking" not in req
+    assert "output_config" not in req
 
 
 def test_thinking_translates_to_reasoning_effort_for_o_series() -> None:

@@ -124,31 +124,11 @@ class AnthropicClient:
             messages.append({"role": "user", "content": first_user})
         messages.extend(spec.extra_messages)
 
-        request: dict[str, Any] = {
-            "model": spec.route.model,
-            "max_tokens": spec.max_output_tokens,
-            "messages": messages,
-        }
-        if system is not None:
-            request["system"] = system
-        if spec.tools:
-            request["tools"] = spec.tools
-        if spec.tool_choice is not None:
-            request["tool_choice"] = spec.tool_choice
-        if spec.stop_sequences:
-            request["stop_sequences"] = spec.stop_sequences
-        # Anthropic constraint: extended thinking is incompatible with a forced
-        # tool_choice (must be "auto" or "none"). Silently drop the budget when
-        # caller forced a specific tool; tool-use loops with `auto` keep thinking.
-        thinking_ok = (
-            spec.route.thinking_tokens > 0
-            and (spec.tool_choice is None or spec.tool_choice.get("type") in ("auto", "none"))
+        request = _build_anthropic_request(
+            spec,
+            system=system,
+            messages=messages,
         )
-        if thinking_ok:
-            request["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": spec.route.thinking_tokens,
-            }
 
         # Estimate cost upfront and admit
         est_in = est_input_tokens or _rough_token_count(spec)
@@ -259,6 +239,74 @@ def _build_blocks(blocks: Iterable[CachedBlock]) -> list[dict[str, Any]]:
             block["cache_control"] = {"type": "ephemeral"}
         out.append(block)
     return out
+
+
+def _build_anthropic_request(
+    spec: AgentCallSpec,
+    *,
+    system: list[dict[str, Any]] | None = None,
+    messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if messages is None:
+        first_user = _build_blocks(spec.user_blocks)
+        messages = []
+        if first_user:
+            messages.append({"role": "user", "content": first_user})
+        messages.extend(spec.extra_messages)
+    request: dict[str, Any] = {
+        "model": spec.route.model,
+        "max_tokens": spec.max_output_tokens,
+        "messages": messages,
+    }
+    if system is None:
+        system = _build_blocks(spec.system_blocks) or None
+    if system is not None:
+        request["system"] = system
+    if spec.tools:
+        request["tools"] = spec.tools
+    if spec.tool_choice is not None:
+        request["tool_choice"] = spec.tool_choice
+    if spec.stop_sequences:
+        request["stop_sequences"] = spec.stop_sequences
+
+    # Anthropic thinking is incompatible with a forced tool_choice. Drop it
+    # there, but keep it for agent tool loops that use auto/none.
+    thinking_ok = (
+        spec.route.thinking_tokens > 0
+        and (spec.tool_choice is None or spec.tool_choice.get("type") in ("auto", "none"))
+    )
+    if not thinking_ok:
+        return request
+
+    if _supports_adaptive_thinking(spec.route.model):
+        request["thinking"] = {"type": "adaptive"}
+        request["output_config"] = {"effort": _thinking_effort_for_budget(spec.route.thinking_tokens)}
+    else:
+        request["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": spec.route.thinking_tokens,
+        }
+    return request
+
+
+def _supports_adaptive_thinking(model: str) -> bool:
+    m = model.lower()
+    return (
+        "claude-mythos" in m
+        or "claude-opus-4-6" in m
+        or "claude-opus-4-7" in m
+        or "claude-opus-4-8" in m
+        or "claude-sonnet-4-6" in m
+        or "claude-sonnet-4-7" in m
+    )
+
+
+def _thinking_effort_for_budget(thinking_tokens: int) -> str:
+    if thinking_tokens <= 4000:
+        return "medium"
+    if thinking_tokens <= 8000:
+        return "high"
+    return "max"
 
 
 def _rough_token_count(spec: AgentCallSpec) -> int:
