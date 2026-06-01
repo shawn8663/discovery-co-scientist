@@ -20,6 +20,7 @@ import asyncio
 import json
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -81,6 +82,7 @@ class Supervisor:
         goal: str,
         *,
         preferences_text: str | None = None,
+        project_files: list[Path] | None = None,
         n_initial: int = 3,
         wall_clock_seconds: int | None = None,
         resume_session_id: str | None = None,
@@ -100,6 +102,14 @@ class Supervisor:
                     "goal": goal[:200], "n_initial": n_initial,
                     "budget_usd": session.budget_usd,
                 })
+                if project_files:
+                    from ..workspace.ingest import ingest_project_files
+
+                    artifacts = ingest_project_files(self.cfg, session.id, project_files)
+                    await self._emit(conn, session.id, "project_files_ingested", {
+                        "n": len(artifacts),
+                        "titles": [a.title for a in artifacts[:10]],
+                    })
                 budget = TokenBudget(
                     cfg=self.cfg,
                     budget_tokens=session.budget_tokens,

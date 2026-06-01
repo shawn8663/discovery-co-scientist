@@ -181,6 +181,21 @@ def run(
     preferences_file: Path | None = typer.Option(
         None, "--preferences-file", help="Path to a text file with extra preferences."
     ),
+    project_file: list[Path] | None = typer.Option(
+        None,
+        "--project-file",
+        help="Project file to ingest before initial Generation. Repeat for multiple files.",
+    ),
+    project_dir: list[Path] | None = typer.Option(
+        None,
+        "--project-dir",
+        help="Directory of PDFs to ingest before initial Generation. Repeat for multiple directories.",
+    ),
+    science_skills_path: Path | None = typer.Option(
+        None,
+        "--science-skills-path",
+        help="Science-skills repo/path to discover before initial Generation.",
+    ),
     n_initial: int = typer.Option(
         3, "--n", help="Number of initial Generation calls (parallel)."
     ),
@@ -205,6 +220,8 @@ def run(
         cfg.run.budget_usd = budget_usd
     if concurrency is not None:
         cfg.run.concurrency = concurrency
+    if science_skills_path is not None:
+        cfg.science_skills.path = str(science_skills_path)
 
     # Pre-flight cost estimate
     from .llm.estimator import estimate as _estimate
@@ -220,12 +237,26 @@ def run(
         console.print(f"[yellow]{est.warning}[/yellow]")
 
     prefs = preferences_file.read_text() if preferences_file else None
+    from .workspace.ingest import collect_project_files
+
+    initial_project_files = collect_project_files(files=project_file, dirs=project_dir)
+    if initial_project_files:
+        console.print(
+            f"[dim]Preloading {len(initial_project_files)} project file(s) into the session workspace.[/dim]"
+        )
+    if science_skills_path is not None:
+        console.print(f"[dim]Using science skills from {science_skills_path}[/dim]")
     from .agents.supervisor import Supervisor
 
     sup = Supervisor(cfg)
     session_id = asyncio.run(
-        sup.run_session(goal, preferences_text=prefs, n_initial=n_initial,
-                        wall_clock_seconds=wall_clock)
+        sup.run_session(
+            goal,
+            preferences_text=prefs,
+            project_files=initial_project_files,
+            n_initial=n_initial,
+            wall_clock_seconds=wall_clock,
+        )
     )
     console.print(f"[green]Done.[/green] session={session_id}")
     console.print(f"View report:  co-scientist report {session_id}")

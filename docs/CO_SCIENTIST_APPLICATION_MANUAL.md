@@ -99,6 +99,8 @@ Optional session inputs include:
 | --- | --- | --- |
 | Research preferences | `--preferences-file` or web form preferences text | Constrains novelty, feasibility, organism, assay type, translational priority, excluded mechanisms, or desired hypothesis style. |
 | Initial generation count | `--n` or web form `n_initial` | Controls how many independent Generation tasks are launched initially. |
+| Initial project files | `--project-file`, `--project-dir`, or web form project paths | Copies PDFs/files into the session workspace before initial Generation. |
+| Initial skill collection | `--science-skills-path` or web form science skills path | Selects the science-skills collection discovered before initial Generation. |
 | Budget | `--budget-usd` or config `[run].budget_usd` | Caps provider spend for the session. |
 | Wall-clock limit | `--wall-clock` or config `[run].wall_clock_seconds` | Caps elapsed runtime. |
 | Concurrency | `--concurrency` or config `[run].concurrency` | Controls how many tasks run in parallel. |
@@ -267,8 +269,11 @@ data/workspaces/<session_id>/uploads/
 data/workspaces/<session_id>/manifest.json
 ```
 
-Uploaded files are registered as `project_file` artifacts. If a file appears to
-be a PDF, the application attempts to parse and index it for `local_pdf_search`.
+Files supplied at session start or uploaded later are registered as
+`project_file` artifacts. If a file appears to be a PDF, the application
+attempts to parse and index it for `local_pdf_search`. Supplying files at
+session start is preferred when local references should shape initial
+hypothesis generation.
 Parser failures are captured and do not crash the session.
 
 Workspace artifact kinds are:
@@ -371,6 +376,9 @@ Commands:
 | --- | ---: | --- |
 | positional `goal` | required | Natural-language research goal. |
 | `--preferences-file PATH` | none | Extra preferences text. |
+| `--project-file PATH` | repeatable | File to ingest into the session workspace before initial Generation. |
+| `--project-dir PATH` | repeatable | Directory of PDFs to ingest before initial Generation. |
+| `--science-skills-path PATH` | config value | Science-skills collection to discover before initial Generation. |
 | `--n INTEGER` | `3` | Number of initial parallel Generation tasks. |
 | `--wall-clock INTEGER` | config value | Wall-clock cap in seconds. |
 | `--budget-usd FLOAT` | config value | Session USD budget. |
@@ -381,6 +389,7 @@ Example:
 ```bash
 source ~/.Codex/.env
 uv run co-scientist run "Identify testable hypotheses about microbiome-driven inflammation" \
+  --project-dir /path/to/reference_pdfs \
   --n 4 \
   --budget-usd 25 \
   --wall-clock 7200 \
@@ -788,4 +797,3 @@ The application can produce strong hypotheses and experiment plans, but domain
 experts must verify literature claims, chemical and biological plausibility,
 experimental safety, regulatory constraints, and feasibility before acting on
 any proposed protocol.
-

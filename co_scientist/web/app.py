@@ -78,23 +78,32 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         background_tasks: BackgroundTasks,
         goal: str = Form(...),
         preferences: str = Form(""),
+        project_paths: str = Form(""),
+        science_skills_path: str = Form(""),
         budget_usd: float = Form(cfg.run.budget_usd),
         n_initial: int = Form(3),
         wall_clock_seconds: int = Form(cfg.run.wall_clock_seconds),
     ) -> RedirectResponse:
         from ..agents.supervisor import Supervisor
+        from ..workspace.ingest import collect_project_files
 
         # Hand the Supervisor a fresh Config copy so per-session knobs don't leak.
         sup_cfg = cfg.model_copy(deep=True)
         sup_cfg.run.budget_usd = budget_usd
         sup_cfg.run.wall_clock_seconds = wall_clock_seconds
+        if science_skills_path.strip():
+            sup_cfg.science_skills.path = science_skills_path.strip()
         sup = Supervisor(sup_cfg)
+        files, dirs = _parse_project_paths(project_paths)
+        initial_project_files = collect_project_files(files=files, dirs=dirs)
 
         async def _run() -> None:
             try:
                 await sup.run_session(
                     goal=goal, preferences_text=preferences or None,
-                    n_initial=n_initial, wall_clock_seconds=wall_clock_seconds,
+                    project_files=initial_project_files,
+                    n_initial=n_initial,
+                    wall_clock_seconds=wall_clock_seconds,
                 )
             except Exception:
                 log.exception("background_run_failed")
@@ -400,6 +409,21 @@ def _overview_safety_context(
         "safety_message": message,
         "safety_artifact_url": safety_artifact_url,
     }
+
+
+def _parse_project_paths(project_paths: str) -> tuple[list[Path], list[Path]]:
+    files: list[Path] = []
+    dirs: list[Path] = []
+    for raw in project_paths.splitlines():
+        value = raw.strip()
+        if not value:
+            continue
+        path = Path(value).expanduser()
+        if path.is_dir():
+            dirs.append(path)
+        else:
+            files.append(path)
+    return files, dirs
 
 
 async def _list_sessions(cfg: Config) -> list[dict[str, Any]]:

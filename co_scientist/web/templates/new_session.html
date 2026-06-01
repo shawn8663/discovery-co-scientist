@@ -9,6 +9,12 @@
     <label>Preferences (optional, free text)
         <textarea name="preferences" rows="2" placeholder="prefer mechanistically specific, testable hypotheses"></textarea>
     </label>
+    <label>Initial project files or PDF directories (optional, one path per line)
+        <textarea name="project_paths" rows="3" placeholder="/path/to/paper.pdf&#10;/path/to/reference_pdf_directory"></textarea>
+    </label>
+    <label>Science skills path (optional)
+        <input type="text" name="science_skills_path" placeholder="/path/to/science-skills">
+    </label>
     <div class="grid">
         <label>Budget (USD)
             <input type="number" name="budget_usd" step="0.5" min="1" value="{{ default_budget }}">
