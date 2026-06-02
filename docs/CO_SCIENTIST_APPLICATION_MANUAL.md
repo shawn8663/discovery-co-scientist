@@ -252,6 +252,9 @@ Built-in retrieval tools include:
 | `europe_pmc_search` | Search Europe PMC. |
 | `openalex_search` | Search OpenAlex scholarly metadata. |
 | `clinical_trials_search` | Search ClinicalTrials.gov records. |
+| `paperclip_search` | Search Paperclip's papers, preprints, OpenAlex abstracts, regulatory documents, and clinical trials when `[paperclip].enabled = true`. |
+| `paperclip_lookup` | Look up Paperclip records by DOI, PMC ID, PMID, title, author, journal, year, or keywords. |
+| `paperclip_map` | Run Paperclip's AI reader over a prior Paperclip search/lookup result set for deeper evidence extraction. |
 | `web_search` | Broad web search through Tavily or Brave, registered only when a key is configured. |
 | `web_fetch` | Fetch and extract web content with SSRF and byte-limit protections. |
 | `local_pdf_search` | Search locally uploaded/indexed PDF content. |
@@ -281,7 +284,7 @@ Workspace artifact kinds are:
 | Kind | Meaning |
 | --- | --- |
 | `project_file` | Uploaded PDFs, notes, or datasets. |
-| `retrieved_literature` | Search results from PubMed, arXiv, Europe PMC, OpenAlex, ClinicalTrials, web, or local PDF search. |
+| `retrieved_literature` | Search results from PubMed, arXiv, Europe PMC, OpenAlex, ClinicalTrials, Paperclip, web, or local PDF search. |
 | `dataset` | Data files associated with a session. |
 | `analysis` | Outputs from analysis skills. |
 | `draft` | Drafting skill outputs. |
@@ -492,6 +495,26 @@ source ~/.Codex/.env
 
 before running commands that call provider APIs.
 
+To use Paperclip as an additional high-volume retrieval source, install the
+optional SDK extra and expose the Paperclip key before starting the app:
+
+```bash
+source ~/.Codex/.env
+uv sync --extra dev --extra paperclip
+```
+
+Then set:
+
+```toml
+[paperclip]
+enabled = true
+```
+
+Paperclip search should usually be used first with a focused source filter and
+a modest result limit. `paperclip_map` is best reserved for promising
+hypotheses after initial screening because it runs a deeper reader pass over a
+saved Paperclip result set.
+
 ## Complete Configuration Reference
 
 ### `[run]`
@@ -657,6 +680,18 @@ Anthropic models, these are translated to adaptive thinking effort.
 | `provider` | `tavily` | `tavily` or `brave`. |
 | `max_results` | `8` | Default web-search result count. |
 
+### `[paperclip]`
+
+| Setting | Default | Meaning |
+| --- | ---: | --- |
+| `enabled` | `false` | Register Paperclip retrieval tools. Requires the optional `paperclip` extra and Paperclip authentication. |
+| `default_limit` | `20` | Default result count for `paperclip_search`. |
+| `lookup_limit` | `25` | Default result count for `paperclip_lookup`. |
+| `default_sources` | `pmc,biorxiv,medrxiv,arxiv,trials,fda` | Default source filter for Paperclip searches. Empty string searches all sources. |
+| `map_enabled` | `true` | Enables `paperclip_map`; set false to prevent deeper map calls. |
+| `timeout_seconds` | `120` | Timeout for search and lookup SDK calls. |
+| `map_timeout_seconds` | `300` | Timeout for map SDK calls. |
+
 ### `[web_fetch]`
 
 | Setting | Default | Meaning |
@@ -717,6 +752,7 @@ Additional optional keys:
 | `BRAVE_API_KEY` | Brave web search. |
 | `NCBI_API_KEY` | PubMed/NCBI rate limits. |
 | `OPENALEX_API_KEY` | OpenAlex rate limits. |
+| `PAPERCLIP_API_KEY` | Paperclip SDK/CLI access. |
 
 ### `[web_ui]`
 

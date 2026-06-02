@@ -17,6 +17,7 @@ from .builtins.arxiv import ArxivSearchTool
 from .builtins.clinical_trials import ClinicalTrialsSearchTool
 from .builtins.europe_pmc import EuropePMCSearchTool
 from .builtins.openalex import OpenAlexSearchTool
+from .builtins.paperclip import PaperclipLookupTool, PaperclipMapTool, PaperclipSearchTool
 from .builtins.pubmed import PubmedSearchTool
 from .local_pdf_search import LocalPDFSearchTool
 from .science_skills import ScienceSkillTool, discover_skills
@@ -31,6 +32,7 @@ AGENT_TOOLS: dict[str, set[str]] = {
         "local_pdf_search",
         "pubmed_search", "arxiv_search", "europe_pmc_search",
         "openalex_search", "clinical_trials_search",
+        "paperclip_search", "paperclip_lookup", "paperclip_map",
         "literature_*",   # any science-skills literature_* tools
     },
     "reflection": {
@@ -38,6 +40,7 @@ AGENT_TOOLS: dict[str, set[str]] = {
         "local_pdf_search",
         "pubmed_search", "arxiv_search", "europe_pmc_search",
         "openalex_search", "clinical_trials_search",
+        "paperclip_search", "paperclip_lookup", "paperclip_map",
         "literature_*",
         # code_exec wired in M2
     },
@@ -47,6 +50,7 @@ AGENT_TOOLS: dict[str, set[str]] = {
         "local_pdf_search",
         "pubmed_search", "arxiv_search", "europe_pmc_search",
         "openalex_search", "clinical_trials_search",
+        "paperclip_search", "paperclip_lookup", "paperclip_map",
         "literature_*",
     },
     "proximity": set(),
@@ -71,6 +75,13 @@ class ToolRegistry:
             ClinicalTrialsSearchTool(),
         ):
             self._register(t)
+        if self._cfg.paperclip.enabled:
+            for t in (
+                PaperclipSearchTool(self._cfg),
+                PaperclipLookupTool(self._cfg),
+                PaperclipMapTool(self._cfg),
+            ):
+                self._register(t)
         # web_search only registers if a backing search API key is set.
         # Otherwise the model would see a tool it can't actually use and
         # smaller models tend to abort the task instead of falling back to
@@ -188,7 +199,10 @@ def _citation_metadata(content: Any) -> list[dict[str, Any]]:
             continue
         item = {
             key: record.get(key)
-            for key in ("title", "url", "doi", "year", "pmid", "nct_id", "id")
+            for key in (
+                "title", "url", "doi", "year", "pmid", "nct_id", "id",
+                "path", "source", "result_id",
+            )
             if record.get(key)
         }
         if item:

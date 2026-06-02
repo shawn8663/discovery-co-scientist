@@ -145,6 +145,16 @@ class WebSearchCfg(BaseModel):
     max_results: int = 8
 
 
+class PaperclipCfg(BaseModel):
+    enabled: bool = False
+    default_limit: int = 20
+    lookup_limit: int = 25
+    default_sources: str = "pmc,biorxiv,medrxiv,arxiv,trials,fda"
+    map_enabled: bool = True
+    timeout_seconds: int = 120
+    map_timeout_seconds: int = 300
+
+
 class WebFetchCfg(BaseModel):
     max_bytes: int = 5_000_000
     timeout_seconds: int = 30
@@ -253,6 +263,7 @@ class Secrets(BaseSettings):
     BRAVE_API_KEY: str = ""
     NCBI_API_KEY: str = ""
     OPENALEX_API_KEY: str = ""
+    PAPERCLIP_API_KEY: str = ""
 
 
 class Config(BaseModel):
@@ -270,6 +281,7 @@ class Config(BaseModel):
     retry: RetryCfg = Field(default_factory=RetryCfg)
     lease: LeaseCfg = Field(default_factory=LeaseCfg)
     web_search: WebSearchCfg = Field(default_factory=WebSearchCfg)
+    paperclip: PaperclipCfg = Field(default_factory=PaperclipCfg)
     web_fetch: WebFetchCfg = Field(default_factory=WebFetchCfg)
     code_exec: CodeExecCfg = Field(default_factory=CodeExecCfg)
     safety: SafetyCfg = Field(default_factory=SafetyCfg)

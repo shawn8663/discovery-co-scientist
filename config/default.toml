@@ -117,6 +117,15 @@ max_attempts         = 3
 provider = "tavily"                  # tavily | brave
 max_results = 8
 
+[paperclip]
+enabled = false                      # set true after installing the paperclip extra/SDK
+default_limit = 20
+lookup_limit = 25
+default_sources = "pmc,biorxiv,medrxiv,arxiv,trials,fda"
+map_enabled = true                   # map is useful but slower/costlier than search
+timeout_seconds = 120
+map_timeout_seconds = 300
+
 [web_fetch]
 max_bytes = 5_000_000
 timeout_seconds = 30
