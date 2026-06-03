@@ -55,6 +55,10 @@ ranking    = 0.25
 evolution  = 0.15
 metareview = 0.10
 proximity  = 0.02
+assay      = 0.25
+candidate  = 0.55
+analysis   = 0.05
+result_interpreter = 0.05
 reserve    = 0.08
 
 [models]

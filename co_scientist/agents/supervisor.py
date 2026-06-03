@@ -53,6 +53,7 @@ from ..storage.repos import events as events_repo
 from ..storage.repos import feedback as fb_repo
 from ..storage.repos import hypotheses as hyp_repo
 from ..storage.repos import reviews as rev_repo
+from ..storage.repos import robin as robin_repo
 from ..storage.repos import sessions as sess_repo
 from ..storage.repos import tasks as task_repo
 from ..tools.registry import ToolRegistry
@@ -525,17 +526,19 @@ class Supervisor:
                     idempotency_key=f"{assay_id}::assay::evaluate",
                 ))
         elif result.kind == "assay_evaluated":
-            await task_repo.enqueue(conn, Task(
-                id=ids.task_id(),
-                session_id=session.id,
-                created_at=datetime.now(UTC),
-                agent="assay",
-                action="RankAssays",
-                payload={"assay_ids": result.assay_ids},
-                priority=110,
-                status="pending",
-                idempotency_key=f"{session.id}::assay::rank::{','.join(result.assay_ids)}",
-            ))
+            assay_ids = await self._assay_ids_ready_for_ranking(conn, session.id)
+            if assay_ids:
+                await task_repo.enqueue(conn, Task(
+                    id=ids.task_id(),
+                    session_id=session.id,
+                    created_at=datetime.now(UTC),
+                    agent="assay",
+                    action="RankAssays",
+                    payload={"assay_ids": assay_ids},
+                    priority=110,
+                    status="pending",
+                    idempotency_key=f"{session.id}::assay::rank::all",
+                ))
         elif result.kind == "assays_ranked":
             winner = result.extra.get("winner_assay_id") or (result.assay_ids[0] if result.assay_ids else None)
             if winner:
@@ -566,17 +569,19 @@ class Supervisor:
                     idempotency_key=f"{candidate_id}::candidate::evaluate",
                 ))
         elif result.kind == "candidate_evaluated":
-            await task_repo.enqueue(conn, Task(
-                id=ids.task_id(),
-                session_id=session.id,
-                created_at=datetime.now(UTC),
-                agent="candidate",
-                action="RankCandidates",
-                payload={"candidate_ids": result.candidate_ids},
-                priority=110,
-                status="pending",
-                idempotency_key=f"{session.id}::candidate::rank::{','.join(result.candidate_ids)}",
-            ))
+            candidate_ids = await self._candidate_ids_ready_for_ranking(conn, session.id)
+            if candidate_ids:
+                await task_repo.enqueue(conn, Task(
+                    id=ids.task_id(),
+                    session_id=session.id,
+                    created_at=datetime.now(UTC),
+                    agent="candidate",
+                    action="RankCandidates",
+                    payload={"candidate_ids": candidate_ids},
+                    priority=110,
+                    status="pending",
+                    idempotency_key=f"{session.id}::candidate::rank::all",
+                ))
         elif result.kind == "analysis_completed":
             for analysis_run_id in result.analysis_run_ids:
                 await task_repo.enqueue(conn, Task(
@@ -605,6 +610,41 @@ class Supervisor:
                     status="pending",
                     idempotency_key=f"{insight_id}::candidate::regenerate::2",
                 ))
+
+    async def _assay_ids_ready_for_ranking(
+        self, conn: aiosqlite.Connection, session_id: str
+    ) -> list[str]:
+        assays = [
+            assay
+            for assay in await robin_repo.list_assays(conn, session_id)
+            if assay.state not in ("quarantined", "rejected")
+        ]
+        if not assays:
+            return []
+        evaluated = {
+            ev.assay_id for ev in await robin_repo.list_assay_evaluations(conn, session_id)
+        }
+        if not all(assay.id in evaluated for assay in assays):
+            return []
+        return [assay.id for assay in assays]
+
+    async def _candidate_ids_ready_for_ranking(
+        self, conn: aiosqlite.Connection, session_id: str
+    ) -> list[str]:
+        candidates = [
+            candidate
+            for candidate in await robin_repo.list_candidates(conn, session_id)
+            if candidate.state not in ("quarantined", "rejected")
+        ]
+        if not candidates:
+            return []
+        evaluated = {
+            ev.candidate_id
+            for ev in await robin_repo.list_candidate_evaluations(conn, session_id)
+        }
+        if not all(candidate.id in evaluated for candidate in candidates):
+            return []
+        return [candidate.id for candidate in candidates]
 
     # ----------------------------- decide_next_steps ----------------------------- #
 

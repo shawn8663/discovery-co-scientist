@@ -78,6 +78,10 @@ class BudgetSharesCfg(BaseModel):
     evolution: float = 0.15
     metareview: float = 0.10
     proximity: float = 0.02
+    assay: float = 0.25
+    candidate: float = 0.55
+    analysis: float = 0.05
+    result_interpreter: float = 0.05
     reserve: float = 0.08
 
 

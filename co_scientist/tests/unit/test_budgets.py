@@ -78,6 +78,19 @@ async def test_share_percent_for_unknown_agent_is_zero() -> None:
 
 
 @pytest.mark.asyncio
+async def test_robin_agents_have_explicit_budget_shares() -> None:
+    cfg = Config()
+    b = TokenBudget(cfg=cfg, budget_tokens=10_000, budget_usd=80.0)
+
+    assert b.share_usd("assay") == pytest.approx(20.0)
+    assert b.share_usd("candidate") == pytest.approx(44.0)
+    assert b.share_usd("analysis") == pytest.approx(4.0)
+    assert b.share_usd("result_interpreter") == pytest.approx(4.0)
+
+    await b.admit("candidate", est_tokens=100, est_usd=10.0)
+
+
+@pytest.mark.asyncio
 async def test_settle_with_zero_actual_releases_reservation() -> None:
     """If a call fails after admission (e.g. retry exhaustion), the caller must
     be able to release the reservation with actual=0 so the reserve doesn't leak."""

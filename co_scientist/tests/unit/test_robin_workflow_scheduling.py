@@ -9,7 +9,17 @@ import pytest
 
 from co_scientist import ids
 from co_scientist.agents.supervisor import Supervisor
-from co_scientist.models import ResearchPlan, Session, Task, TaskResult
+from co_scientist.models import (
+    AssayEvaluation,
+    AssayProposal,
+    ResearchPlan,
+    Session,
+    Task,
+    TaskResult,
+    TherapeuticCandidate,
+    TherapeuticCandidateEvaluation,
+)
+from co_scientist.storage.repos import robin as robin_repo
 from co_scientist.storage.repos import sessions as sess_repo
 
 
@@ -88,6 +98,16 @@ async def test_general_session_initializes_current_generation_flow(tmp_cfg, conn
 async def test_robin_followups_advance_assays_candidates_and_insights(tmp_cfg, conn) -> None:
     session = await _make_session(conn)
     supervisor = Supervisor(tmp_cfg)
+    now = _now()
+    for aid in ("assay_a", "assay_b"):
+        await robin_repo.insert_assay(conn, AssayProposal(
+            id=aid,
+            session_id=session.id,
+            created_at=now,
+            strategy_name=aid,
+            reasoning="rationale",
+            artifact_path=f"artifacts/{session.id}/robin/assays/{aid}.json",
+        ))
 
     await supervisor._apply_follow_ups(
         conn,
@@ -98,9 +118,21 @@ async def test_robin_followups_advance_assays_candidates_and_insights(tmp_cfg, c
             created_at=_now(),
             agent="assay",
             action="GenerateAssays",
-        ),
-        TaskResult(kind="assay_created", assay_ids=["assay_a", "assay_b"]),
-    )
+            ),
+            TaskResult(kind="assay_created", assay_ids=["assay_a", "assay_b"]),
+        )
+    for aid in ("assay_a", "assay_b"):
+        await robin_repo.insert_assay_evaluation(conn, AssayEvaluation(
+            id=f"eval_{aid}",
+            assay_id=aid,
+            session_id=session.id,
+            created_at=now,
+            overview="overview",
+            biomedical_evidence="evidence",
+            previous_use="prior",
+            overall_evaluation="overall",
+            artifact_path=f"artifacts/{session.id}/robin/assay_evaluations/eval_{aid}.json",
+        ))
     await supervisor._apply_follow_ups(
         conn,
         session,
@@ -122,9 +154,19 @@ async def test_robin_followups_advance_assays_candidates_and_insights(tmp_cfg, c
             created_at=_now(),
             agent="assay",
             action="RankAssays",
-        ),
-        TaskResult(kind="assays_ranked", assay_ids=["assay_a"], extra={"winner_assay_id": "assay_a"}),
-    )
+            ),
+            TaskResult(kind="assays_ranked", assay_ids=["assay_a"], extra={"winner_assay_id": "assay_a"}),
+        )
+    for cid in ("cand_a", "cand_b"):
+        await robin_repo.insert_candidate(conn, TherapeuticCandidate(
+            id=cid,
+            session_id=session.id,
+            created_at=now,
+            candidate=cid,
+            hypothesis="hypothesis",
+            reasoning="reasoning",
+            artifact_path=f"artifacts/{session.id}/robin/candidates/{cid}.json",
+        ))
     await supervisor._apply_follow_ups(
         conn,
         session,
@@ -134,9 +176,22 @@ async def test_robin_followups_advance_assays_candidates_and_insights(tmp_cfg, c
             created_at=_now(),
             agent="candidate",
             action="GenerateCandidates",
-        ),
-        TaskResult(kind="candidate_created", candidate_ids=["cand_a", "cand_b"]),
-    )
+            ),
+            TaskResult(kind="candidate_created", candidate_ids=["cand_a", "cand_b"]),
+        )
+    for cid in ("cand_a", "cand_b"):
+        await robin_repo.insert_candidate_evaluation(conn, TherapeuticCandidateEvaluation(
+            id=f"eval_{cid}",
+            candidate_id=cid,
+            session_id=session.id,
+            created_at=now,
+            overview="overview",
+            therapeutic_history="history",
+            mechanism_of_action="moa",
+            expected_effect="effect",
+            overall_evaluation="overall",
+            artifact_path=f"artifacts/{session.id}/robin/candidate_evaluations/eval_{cid}.json",
+        ))
     await supervisor._apply_follow_ups(
         conn,
         session,
@@ -197,3 +252,126 @@ async def test_robin_followups_advance_assays_candidates_and_insights(tmp_cfg, c
             {"round_index": 2, "num_candidates": 10},
         ),
     ]
+
+
+async def _task_rows(conn, session_id: str):
+    async with conn.execute(
+        "SELECT agent, action, target_id, payload FROM tasks WHERE session_id=? ORDER BY created_at",
+        (session_id,),
+    ) as cur:
+        return await cur.fetchall()
+
+
+@pytest.mark.asyncio
+async def test_assays_rank_once_after_all_assays_are_evaluated(tmp_cfg, conn) -> None:
+    session = await _make_session(conn)
+    supervisor = Supervisor(tmp_cfg)
+    now = _now()
+    for aid in ("assay_a", "assay_b"):
+        await robin_repo.insert_assay(conn, AssayProposal(
+            id=aid,
+            session_id=session.id,
+            created_at=now,
+            strategy_name=aid,
+            reasoning="rationale",
+            artifact_path=f"artifacts/{session.id}/robin/assays/{aid}.json",
+        ))
+
+    await robin_repo.insert_assay_evaluation(conn, AssayEvaluation(
+        id="eval_a",
+        assay_id="assay_a",
+        session_id=session.id,
+        created_at=now,
+        overview="overview",
+        biomedical_evidence="evidence",
+        previous_use="prior",
+        overall_evaluation="overall",
+        artifact_path=f"artifacts/{session.id}/robin/assay_evaluations/eval_a.json",
+    ))
+    await supervisor._apply_follow_ups(
+        conn,
+        session,
+        Task(id=ids.task_id(), session_id=session.id, created_at=now, agent="assay", action="EvaluateAssay"),
+        TaskResult(kind="assay_evaluated", assay_ids=["assay_a"]),
+    )
+    assert [r["action"] for r in await _task_rows(conn, session.id)] == []
+
+    await robin_repo.insert_assay_evaluation(conn, AssayEvaluation(
+        id="eval_b",
+        assay_id="assay_b",
+        session_id=session.id,
+        created_at=now,
+        overview="overview",
+        biomedical_evidence="evidence",
+        previous_use="prior",
+        overall_evaluation="overall",
+        artifact_path=f"artifacts/{session.id}/robin/assay_evaluations/eval_b.json",
+    ))
+    await supervisor._apply_follow_ups(
+        conn,
+        session,
+        Task(id=ids.task_id(), session_id=session.id, created_at=now, agent="assay", action="EvaluateAssay"),
+        TaskResult(kind="assay_evaluated", assay_ids=["assay_b"]),
+    )
+
+    actual = [(r["agent"], r["action"], json.loads(r["payload"])) for r in await _task_rows(conn, session.id)]
+    assert actual == [("assay", "RankAssays", {"assay_ids": ["assay_a", "assay_b"]})]
+
+
+@pytest.mark.asyncio
+async def test_candidates_rank_once_after_all_candidates_are_evaluated(tmp_cfg, conn) -> None:
+    session = await _make_session(conn)
+    supervisor = Supervisor(tmp_cfg)
+    now = _now()
+    for cid in ("cand_a", "cand_b"):
+        await robin_repo.insert_candidate(conn, TherapeuticCandidate(
+            id=cid,
+            session_id=session.id,
+            created_at=now,
+            candidate=cid,
+            hypothesis="hypothesis",
+            reasoning="reasoning",
+            artifact_path=f"artifacts/{session.id}/robin/candidates/{cid}.json",
+        ))
+
+    await robin_repo.insert_candidate_evaluation(conn, TherapeuticCandidateEvaluation(
+        id="eval_a",
+        candidate_id="cand_a",
+        session_id=session.id,
+        created_at=now,
+        overview="overview",
+        therapeutic_history="history",
+        mechanism_of_action="moa",
+        expected_effect="effect",
+        overall_evaluation="overall",
+        artifact_path=f"artifacts/{session.id}/robin/candidate_evaluations/eval_a.json",
+    ))
+    await supervisor._apply_follow_ups(
+        conn,
+        session,
+        Task(id=ids.task_id(), session_id=session.id, created_at=now, agent="candidate", action="EvaluateCandidate"),
+        TaskResult(kind="candidate_evaluated", candidate_ids=["cand_a"]),
+    )
+    assert [r["action"] for r in await _task_rows(conn, session.id)] == []
+
+    await robin_repo.insert_candidate_evaluation(conn, TherapeuticCandidateEvaluation(
+        id="eval_b",
+        candidate_id="cand_b",
+        session_id=session.id,
+        created_at=now,
+        overview="overview",
+        therapeutic_history="history",
+        mechanism_of_action="moa",
+        expected_effect="effect",
+        overall_evaluation="overall",
+        artifact_path=f"artifacts/{session.id}/robin/candidate_evaluations/eval_b.json",
+    ))
+    await supervisor._apply_follow_ups(
+        conn,
+        session,
+        Task(id=ids.task_id(), session_id=session.id, created_at=now, agent="candidate", action="EvaluateCandidate"),
+        TaskResult(kind="candidate_evaluated", candidate_ids=["cand_b"]),
+    )
+
+    actual = [(r["agent"], r["action"], json.loads(r["payload"])) for r in await _task_rows(conn, session.id)]
+    assert actual == [("candidate", "RankCandidates", {"candidate_ids": ["cand_a", "cand_b"]})]

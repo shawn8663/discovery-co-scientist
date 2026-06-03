@@ -56,6 +56,10 @@ class TokenBudget:
             "evolution": shares.evolution,
             "metareview": shares.metareview,
             "proximity": shares.proximity,
+            "assay": shares.assay,
+            "candidate": shares.candidate,
+            "analysis": shares.analysis,
+            "result_interpreter": shares.result_interpreter,
         }.get(agent, 0.0)
 
     # ----------------------------- ops ---------------------------------- #
