@@ -66,6 +66,7 @@ co-scientist = "co_scientist.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["co_scientist"]
+force-include = { "config" = "config" }
 
 [tool.ruff]
 line-length = 100

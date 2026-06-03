@@ -18,6 +18,13 @@ def test_pyproject_renames_distribution_and_keeps_cli_aliases() -> None:
     assert data["project"]["scripts"]["co-scientist"] == "co_scientist.cli:app"
 
 
+def test_pyproject_wheel_includes_top_level_config_prompts() -> None:
+    data = tomllib.loads(Path("pyproject.toml").read_text())
+
+    force_include = data["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+    assert force_include["config"] == "config"
+
+
 def test_version_reports_new_public_identity() -> None:
     assert cli.PRIMARY_CLI == "discovery-coscientist"
     assert cli.PRODUCT_NAME == "Discovery Co-Scientist"
