@@ -44,6 +44,7 @@ from .anthropic_client import (
     AnthropicResponse,
     CallContext,
     _rough_token_count,
+    _valid_stop_sequences,
 )
 from .budgets import TokenBudget
 from .retry import RetryPolicy, with_retry
@@ -311,8 +312,9 @@ def _build_openai_request(spec: AgentCallSpec) -> dict[str, Any]:
         "messages": messages,
         "max_tokens": spec.max_output_tokens,
     }
-    if spec.stop_sequences:
-        request["stop"] = spec.stop_sequences
+    stop_sequences = _valid_stop_sequences(spec.stop_sequences)
+    if stop_sequences:
+        request["stop"] = stop_sequences
 
     # Tools: Anthropic `[{name, description, input_schema}]` →
     # OpenAI `[{type:"function", function:{name, description, parameters}}]`.

@@ -411,7 +411,6 @@ class RankingAgent(BaseAgent):
             tools=[],
             tool_choice=None,
             max_output_tokens=2048,
-            stop_sequences=["\n\n\n"],
         )
         ctx = CallContext(
             session_id=session.id, task_id=None,

@@ -241,6 +241,8 @@ async def test_ranking_emits_match_trace_event(tmp_cfg, conn) -> None:
     ))
 
     assert result.kind == "tournament_match_complete"
+    spec = deps.llm.call.call_args.args[0]
+    assert spec.stop_sequences is None
     recent = await events_repo.recent(conn, session.id, limit=10)
     event = next(e for e in recent if e["event"] == "ranking_match_trace")
     assert event["agent"] == "ranking"

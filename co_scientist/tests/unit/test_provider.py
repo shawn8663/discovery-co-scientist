@@ -291,6 +291,36 @@ def test_anthropic_request_drops_thinking_for_forced_tool_choice() -> None:
     assert "output_config" not in req
 
 
+def test_anthropic_request_omits_whitespace_only_stop_sequences() -> None:
+    spec = AgentCallSpec(
+        route=_route(model="claude-opus-4-7"),
+        user_blocks=[CachedBlock("go")],
+        stop_sequences=["\n\n\n", "  \t"],
+    )
+    req = _build_anthropic_request(spec)
+    assert "stop_sequences" not in req
+
+
+def test_openai_request_omits_whitespace_only_stop_sequences() -> None:
+    spec = AgentCallSpec(
+        route=_route(),
+        user_blocks=[CachedBlock("go")],
+        stop_sequences=["\n\n\n", "  \t"],
+    )
+    req = _build_openai_request(spec)
+    assert "stop" not in req
+
+
+def test_provider_requests_keep_non_whitespace_stop_sequences() -> None:
+    spec = AgentCallSpec(
+        route=_route(model="claude-opus-4-7"),
+        user_blocks=[CachedBlock("go")],
+        stop_sequences=["<END>", "\n\n\n"],
+    )
+    assert _build_anthropic_request(spec)["stop_sequences"] == ["<END>"]
+    assert _build_openai_request(spec)["stop"] == ["<END>"]
+
+
 def test_thinking_translates_to_reasoning_effort_for_o_series() -> None:
     spec = AgentCallSpec(
         route=_route(model="o3", thinking=8000),

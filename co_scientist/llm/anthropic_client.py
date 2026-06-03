@@ -79,6 +79,12 @@ class AnthropicResponse:
     cache_write: int
 
 
+def _valid_stop_sequences(stop_sequences: list[str] | None) -> list[str]:
+    if not stop_sequences:
+        return []
+    return [seq for seq in stop_sequences if seq.strip()]
+
+
 class AnthropicClient:
     """Async wrapper. One instance per session is fine."""
 
@@ -266,8 +272,9 @@ def _build_anthropic_request(
         request["tools"] = spec.tools
     if spec.tool_choice is not None:
         request["tool_choice"] = spec.tool_choice
-    if spec.stop_sequences:
-        request["stop_sequences"] = spec.stop_sequences
+    stop_sequences = _valid_stop_sequences(spec.stop_sequences)
+    if stop_sequences:
+        request["stop_sequences"] = stop_sequences
 
     # Anthropic thinking is incompatible with a forced tool_choice. Drop it
     # there, but keep it for agent tool loops that use auto/none.
