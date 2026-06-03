@@ -1012,6 +1012,7 @@ def _build_summary(
             "gold_hit_detail": hit_detail,
             "error": st.error,
         })
+    ranking_agreement = _ranking_agreement(rows) if goldset_size else None
     # Primary sort: gold recall (more hits = better) when a gold set was
     # configured; otherwise mean Elo. Secondary sort always mean Elo.
     if goldset_size:
@@ -1027,6 +1028,7 @@ def _build_summary(
         "goal": goal,
         "judge": f"{judge_provider}:{judge_model}",
         "n_matches": n_matches,
+        "ranking_agreement": ranking_agreement,
         "goldset": {
             "label": goldset.label,
             "description": goldset.description,
@@ -1045,6 +1047,7 @@ def _build_regression_report(summary: dict[str, Any]) -> str:
         f"**Goal.** {summary.get('goal', '')}",
         f"**Judge.** `{summary.get('judge', '')}`",
         f"**Matches.** {summary.get('n_matches', 0)}",
+        f"**Ranking agreement.** {_fmt(summary.get('ranking_agreement'))}",
         "",
     ]
     goldset = summary.get("goldset")
@@ -1057,13 +1060,13 @@ def _build_regression_report(summary: dict[str, Any]) -> str:
     lines.extend([
         "## Candidate metrics",
         "",
-        "| label | mode | quality mean Elo | top Elo | cost USD | latency ms | duplicate rate | retrieval calls | retrieval cache hit ratio | retrieval latency ms | ranking cost USD | ranking latency ms | gold-set recall | gold hits |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| label | mode | quality mean Elo | top Elo | cost USD | latency ms | duplicate rate | retrieval calls | retrieval hits | retrieval cache hit ratio | retrieval latency ms | ranking cost USD | ranking latency ms | gold-set recall | gold hits |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ])
     for row in candidates:
         lines.append(
             "| {label} | {mode} | {mean_elo} | {top_elo} | {cost_usd} | {latency} | "
-            "{duplicate_rate} | {retrieval_calls} | {retrieval_hit_ratio} | "
+            "{duplicate_rate} | {retrieval_calls} | {retrieval_hits} | {retrieval_hit_ratio} | "
             "{retrieval_latency} | {ranking_cost} | {ranking_latency} | "
             "{gold_recall} | {gold_hits} |".format(
                 label=row.get("label", ""),
@@ -1074,6 +1077,7 @@ def _build_regression_report(summary: dict[str, Any]) -> str:
                 latency=_fmt(row.get("mean_latency_ms")),
                 duplicate_rate=_fmt(row.get("duplicate_rate")),
                 retrieval_calls=_fmt(row.get("retrieval_tool_calls")),
+                retrieval_hits=_fmt(row.get("retrieval_cache_hits")),
                 retrieval_hit_ratio=_fmt(row.get("retrieval_cache_hit_ratio")),
                 retrieval_latency=_fmt(row.get("retrieval_latency_ms_avg")),
                 ranking_cost=_fmt(row.get("ranking_cost_usd")),
@@ -1091,9 +1095,29 @@ def _build_regression_report(summary: dict[str, Any]) -> str:
         "- Latency: compare generation and ranking latency.",
         "- Duplicate rate: lower values indicate less wasted generation.",
         "- Retrieval: compare retrieval call count, cache hit ratio, and retrieval latency.",
+        "- Ranking agreement: compare ranking order against gold-set or expert reference order when available.",
         "- Gold-set recall: use the AML gold set when configured to compare against known entities.",
     ])
     return "\n".join(lines) + "\n"
+
+
+def _ranking_agreement(rows: list[dict[str, Any]]) -> float | None:
+    """Spearman agreement between Elo ranking and gold-hit ranking."""
+    if len(rows) < 2:
+        return None
+    elo_sorted = sorted(
+        rows,
+        key=lambda r: (r.get("mean_elo") is None, -(r.get("mean_elo") or 0.0)),
+    )
+    gold_sorted = sorted(
+        rows,
+        key=lambda r: (-(r.get("gold_hits") or 0), -(r.get("mean_elo") or 0.0)),
+    )
+    elo_rank = {id(row): i + 1 for i, row in enumerate(elo_sorted)}
+    gold_rank = {id(row): i + 1 for i, row in enumerate(gold_sorted)}
+    n = len(rows)
+    sum_d2 = sum((elo_rank[id(row)] - gold_rank[id(row)]) ** 2 for row in rows)
+    return 1 - (6 * sum_d2) / (n * (n * n - 1))
 
 
 def _fmt(value: Any) -> str:

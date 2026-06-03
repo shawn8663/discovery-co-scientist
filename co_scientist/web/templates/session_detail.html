@@ -1,9 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Session {{ session.id[-12:] }} — AI Co-Scientist{% endblock %}
+{% block title %}Session {{ session.id[-12:] }} — Discovery Co-Scientist{% endblock %}
 {% block content %}
 <hgroup>
     <h1>Session <code>{{ session.id[-12:] }}</code></h1>
     <p><span class="status status-{{ session.status }}">{{ session.status }}</span>
+       — workflow: <code>{{ session.workflow }}</code>
        — goal: {{ session.research_goal[:200] }}</p>
 </hgroup>
 
@@ -63,6 +64,78 @@
     </table>
     {% endif %}
 </section>
+
+{% if session.workflow == "therapeutic_discovery" %}
+<section id="therapeutic-discovery">
+    <h2>Therapeutic discovery</h2>
+    <div class="grid">
+        <article>
+            <header><strong>Assays</strong></header>
+            {% if assays %}
+            <ul>
+                {% for assay in assays[:8] %}
+                <li><strong>{{ assay.strategy_name }}</strong>
+                    <small>{{ assay.state }}{% if assay.rank_score is not none %} · score {{ "%.2f"|format(assay.rank_score) }}{% endif %}</small>
+                    <form method="POST" action="/api/sessions/{{ session.id }}/feedback"
+                          hx-post="/api/sessions/{{ session.id }}/feedback" hx-swap="none"
+                          style="display:inline">
+                        <input type="hidden" name="target_type" value="assay">
+                        <input type="hidden" name="target_id" value="{{ assay.id }}">
+                        <input type="hidden" name="text" value="Expert pinned assay: {{ assay.strategy_name }}">
+                        <button type="submit" name="kind" value="pin">Pin</button>
+                        <button type="submit" name="kind" value="rejection">Reject</button>
+                    </form>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}<p><em>No assay proposals yet.</em></p>{% endif %}
+        </article>
+        <article>
+            <header><strong>Candidates</strong></header>
+            {% if candidates %}
+            <ul>
+                {% for candidate in candidates[:8] %}
+                <li><strong>{{ candidate.candidate }}</strong>
+                    <small>{{ candidate.state }}{% if candidate.rank_score is not none %} · score {{ "%.2f"|format(candidate.rank_score) }}{% endif %}</small>
+                    <form method="POST" action="/api/sessions/{{ session.id }}/feedback"
+                          hx-post="/api/sessions/{{ session.id }}/feedback" hx-swap="none"
+                          style="display:inline">
+                        <input type="hidden" name="target_type" value="candidate">
+                        <input type="hidden" name="target_id" value="{{ candidate.id }}">
+                        <input type="hidden" name="text" value="Expert decision on candidate: {{ candidate.candidate }}">
+                        <button type="submit" name="kind" value="pin">Pin</button>
+                        <button type="submit" name="kind" value="rejection">Reject</button>
+                    </form>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}<p><em>No therapeutic candidates yet.</em></p>{% endif %}
+        </article>
+    </div>
+    <div class="grid">
+        <article>
+            <header><strong>Analysis runs</strong></header>
+            {% if analysis_runs %}
+            <ul>
+                {% for run in analysis_runs[:8] %}
+                <li><code>{{ run.kind }}</code> · {{ run.summary[:140] }}</li>
+                {% endfor %}
+            </ul>
+            {% else %}<p><em>No analysis runs yet.</em></p>{% endif %}
+        </article>
+        <article>
+            <header><strong>Experiment insights</strong></header>
+            {% if experiment_insights %}
+            <ul>
+                {% for insight in experiment_insights[:8] %}
+                <li>{{ insight.summary[:160] }}</li>
+                {% endfor %}
+            </ul>
+            {% else %}<p><em>No experiment insights yet.</em></p>{% endif %}
+        </article>
+    </div>
+</section>
+{% endif %}
 
 <section id="workspace-artifacts">
     <h2>Workspace artifacts</h2>

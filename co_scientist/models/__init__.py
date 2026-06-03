@@ -9,16 +9,32 @@ from .hypothesis import (
     HypothesisStrategy,
 )
 from .review import AssumptionCheck, Evidence, Review, ReviewKind, ReviewScores, ReviewVerdict
+from .robin import (
+    AnalysisKind,
+    AnalysisRun,
+    AssayEvaluation,
+    AssayProposal,
+    DiscoveryWorkflow,
+    ExperimentInsight,
+    TherapeuticCandidate,
+    TherapeuticCandidateEvaluation,
+)
 from .session import ResearchPlan, Session, SessionStatus
 from .task import Task, TaskAction, TaskAgent, TaskResult, TaskResultKind, TaskStatus
 from .tournament import EloJournalEntry, MatchMode, TournamentMatch, Winner
 from .transcript import Transcript
 
 __all__ = [
+    "AnalysisKind",
+    "AnalysisRun",
+    "AssayEvaluation",
+    "AssayProposal",
     "AssumptionCheck",
     "CitedPaper",
+    "DiscoveryWorkflow",
     "EloJournalEntry",
     "Evidence",
+    "ExperimentInsight",
     "FeedbackKind",
     "FeedbackSource",
     "Hypothesis",
@@ -41,6 +57,8 @@ __all__ = [
     "TaskResult",
     "TaskResultKind",
     "TaskStatus",
+    "TherapeuticCandidate",
+    "TherapeuticCandidateEvaluation",
     "TournamentMatch",
     "Transcript",
     "Winner",

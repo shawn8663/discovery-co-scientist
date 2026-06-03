@@ -36,6 +36,7 @@ from ..storage.repos import events as events_repo
 from ..storage.repos import feedback as fb_repo
 from ..storage.repos import hypotheses as hyp_repo
 from ..storage.repos import reviews as rev_repo
+from ..storage.repos import robin as robin_repo
 from ..storage.repos import sessions as sess_repo
 from ..storage.repos import transcripts as tx_repo
 from ..tools.local_pdf_search import _looks_like_pdf, _read_or_index_pdf
@@ -77,6 +78,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         request: Request,
         background_tasks: BackgroundTasks,
         goal: str = Form(...),
+        workflow: str = Form("general_hypothesis"),
+        disease: str = Form(""),
         preferences: str = Form(""),
         project_paths: str = Form(""),
         science_skills_path: str = Form(""),
@@ -96,14 +99,19 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         sup = Supervisor(sup_cfg)
         files, dirs = _parse_project_paths(project_paths)
         initial_project_files = collect_project_files(files=files, dirs=dirs)
+        effective_goal = goal.strip()
+        if workflow == "therapeutic_discovery" and disease.strip() and not effective_goal:
+            effective_goal = f"Discover therapeutics for {disease.strip()}"
 
         async def _run() -> None:
             try:
                 await sup.run_session(
-                    goal=goal, preferences_text=preferences or None,
+                    goal=effective_goal,
+                    preferences_text=preferences or None,
                     project_files=initial_project_files,
                     n_initial=n_initial,
                     wall_clock_seconds=wall_clock_seconds,
+                    workflow=workflow,  # type: ignore[arg-type]
                 )
             except Exception:
                 log.exception("background_run_failed")
@@ -125,6 +133,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             recent_matches = await _recent_matches(conn, session_id, limit=20)
             usage = await tx_repo.usage_summary(conn, session_id)
             artifacts = ScientistWorkspace(cfg, session_id).list()
+            robin_context = {}
+            if session.workflow == "therapeutic_discovery":
+                robin_context = {
+                    "assays": await robin_repo.list_assays(conn, session_id),
+                    "candidates": await robin_repo.list_candidates(conn, session_id),
+                    "analysis_runs": await robin_repo.list_analysis_runs(conn, session_id),
+                    "experiment_insights": await robin_repo.list_experiment_insights(conn, session_id),
+                }
             return TEMPLATES.TemplateResponse(
                 request,
                 "session_detail.html",
@@ -134,6 +150,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     "recent_matches": recent_matches,
                     "usage": usage,
                     "workspace_artifacts": artifacts,
+                    **robin_context,
                 },
             )
         finally:
@@ -297,10 +314,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         session_id: str,
         text: str = Form(...),
         kind: str = Form("directive"),
+        target_type: str = Form("hypothesis"),
         target_id: str = Form(""),
     ) -> JSONResponse:
         conn = await db_mod.connect(cfg)
         try:
+            from ..storage.repos import robin as robin_repo
+
             fb = SystemFeedback(
                 id=ids.feedback_id(), session_id=session_id,
                 created_at=datetime.now(UTC),
@@ -308,12 +328,19 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 target_id=target_id or None, text=text, active=True,
             )
             await fb_repo.insert(conn, fb)
-            if kind == "pin" and target_id:
-                await hyp_repo.set_state(conn, target_id, "pinned")
-            elif kind == "rejection" and target_id:
-                await hyp_repo.set_state(conn, target_id, "rejected")
+            if target_id:
+                state = "pinned" if kind == "pin" else "rejected" if kind == "rejection" else None
+                if state and target_type == "assay":
+                    await robin_repo.set_assay_state(conn, target_id, state)
+                elif state and target_type == "candidate":
+                    await robin_repo.set_candidate_state(conn, target_id, state)
+                elif state:
+                    await hyp_repo.set_state(conn, target_id, state)
             await GLOBAL_BUS.publish(session_id, "human_feedback", {
-                "kind": kind, "target_id": target_id or None, "text": text[:200],
+                "kind": kind,
+                "target_type": target_type,
+                "target_id": target_id or None,
+                "text": text[:200],
             })
             return JSONResponse({"ok": True, "feedback_id": fb.id})
         finally:

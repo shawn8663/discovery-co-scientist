@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .robin import DiscoveryWorkflow
+
 SessionStatus = Literal["running", "paused", "done", "failed", "aborted"]
 
 
@@ -29,6 +31,7 @@ class Session(BaseModel):
     created_at: datetime
     updated_at: datetime
     status: SessionStatus
+    workflow: DiscoveryWorkflow = "general_hypothesis"
     research_goal: str
     research_plan: ResearchPlan
     config_snapshot: dict

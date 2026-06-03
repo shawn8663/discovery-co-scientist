@@ -16,14 +16,20 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from . import ids
 from .config import has_llm_key, load_config, provider_key_env
 from .logging import get_logger, setup_logging
 from .storage import db as db_mod
 
 VERSION = "0.1.0"
+PRODUCT_NAME = "Discovery Co-Scientist"
+PRIMARY_CLI = "discovery-coscientist"
 
 app = typer.Typer(
-    help="AI Co-Scientist — multi-agent hypothesis generation, ranking, and synthesis.",
+    help=(
+        "Discovery Co-Scientist — multi-agent hypothesis generation, "
+        "ranking, synthesis, and Robin-style therapeutic discovery."
+    ),
     no_args_is_help=True,
     add_completion=False,
 )
@@ -53,8 +59,8 @@ def _main(
 
 @app.command()
 def version() -> None:
-    """Print the co-scientist version."""
-    console.print(f"co-scientist {VERSION}")
+    """Print the Discovery Co-Scientist version."""
+    console.print(f"{PRIMARY_CLI} {VERSION} — {PRODUCT_NAME}")
 
 
 @app.command()
@@ -177,7 +183,17 @@ def status(ctx: typer.Context, session_id: str = typer.Argument(...)) -> None:
 @app.command()
 def run(
     ctx: typer.Context,
-    goal: str = typer.Argument(..., help="Research goal in natural language."),
+    goal: str | None = typer.Argument(None, help="Research goal in natural language."),
+    workflow: str = typer.Option(
+        "general_hypothesis",
+        "--workflow",
+        help="Workflow profile: general_hypothesis or therapeutic_discovery.",
+    ),
+    disease: str | None = typer.Option(
+        None,
+        "--disease",
+        help="Disease name for --workflow therapeutic_discovery, e.g. 'dry AMD'.",
+    ),
     preferences_file: Path | None = typer.Option(
         None, "--preferences-file", help="Path to a text file with extra preferences."
     ),
@@ -209,8 +225,14 @@ def run(
         None, "--concurrency", help="Override worker concurrency."
     ),
 ) -> None:
-    """Start a fresh research session. Generation → Reflection → Ranking tournament → Meta-review."""
+    """Start a fresh Discovery Co-Scientist session."""
     cfg, _ = ctx.obj
+    effective_goal = goal
+    if workflow == "therapeutic_discovery" and disease and not effective_goal:
+        effective_goal = f"Discover therapeutics for {disease}"
+    if not effective_goal:
+        console.print("[red]Provide GOAL or --disease for therapeutic_discovery.[/red]")
+        raise typer.Exit(2)
     if not has_llm_key(cfg):
         env_var = provider_key_env(cfg)
         console.print(f"[red]{env_var} is not set (LLM provider = {cfg.llm.provider}). See .env.example.[/red]")
@@ -229,7 +251,7 @@ def run(
     est = _estimate(cfg)
     console.print(
         f"[dim]Pre-flight estimate: ${est.total_usd:.2f} "
-        f"(budget ${cfg.run.budget_usd:.2f}, "
+            f"(budget ${cfg.run.budget_usd:.2f}, "
         f"max_ideas={cfg.run.max_ideas}, "
         f"max_matches_per_idea={cfg.run.max_matches_per_idea})[/dim]"
     )
@@ -251,15 +273,16 @@ def run(
     sup = Supervisor(cfg)
     session_id = asyncio.run(
         sup.run_session(
-            goal,
+            effective_goal,
             preferences_text=prefs,
             project_files=initial_project_files,
             n_initial=n_initial,
             wall_clock_seconds=wall_clock,
+            workflow=workflow,
         )
     )
     console.print(f"[green]Done.[/green] session={session_id}")
-    console.print(f"View report:  co-scientist report {session_id}")
+    console.print(f"View report:  {PRIMARY_CLI} report {session_id}")
 
 
 @app.command()
@@ -356,6 +379,67 @@ def feedback(
 
     asyncio.run(_do())
     console.print(f"[green]Feedback recorded[/green] for session={session_id}")
+
+
+@app.command()
+def analyze(
+    ctx: typer.Context,
+    session_id: str = typer.Argument(...),
+    kind: str = typer.Option("tabular", "--kind", help="flow_cytometry | rnaseq | tabular"),
+    dataset: Path = typer.Option(..., "--dataset", help="Dataset file to register and analyze."),
+    trajectories: int = typer.Option(3, "--trajectories", min=1, max=8),
+) -> None:
+    """Register a dataset and run a controlled analysis wrapper."""
+    cfg, _ = ctx.obj
+    if not dataset.is_file():
+        console.print(f"[red]Dataset not found: {dataset}[/red]")
+        raise typer.Exit(1)
+
+    async def _do() -> str:
+        conn = await db_mod.connect(cfg)
+        try:
+            from .agents.analysis import AnalysisAgent
+            from .agents.base import AgentDeps
+            from .models import Task
+            from .tools.registry import ToolRegistry
+            from .workspace import ScientistWorkspace
+
+            workspace = ScientistWorkspace(cfg, session_id)
+            artifact = workspace.add_artifact(
+                kind="dataset",
+                path=dataset.resolve(),
+                title=dataset.name,
+                provenance={"source": "cli_analyze"},
+                metadata={"kind": kind},
+            )
+
+            class _NoLLM:
+                async def call(self, *args, **kwargs):  # pragma: no cover - analysis v1 does not call LLM
+                    raise RuntimeError("analysis wrapper does not use LLM calls")
+
+            agent = AnalysisAgent(
+                AgentDeps(cfg=cfg, db=conn, llm=_NoLLM(), tools=ToolRegistry(cfg).discover())
+            )
+            task = Task(
+                id=ids.task_id(),
+                session_id=session_id,
+                created_at=datetime.now(UTC),
+                agent="analysis",
+                action="AnalyzeExperimentalData",
+                payload={
+                    "kind": kind,
+                    "dataset_artifact_ids": [artifact.id],
+                    "trajectories": trajectories,
+                },
+                status="pending",
+            )
+            result = await agent.execute(task)
+            return result.analysis_run_ids[0]
+        finally:
+            await conn.close()
+
+    run_id = asyncio.run(_do())
+    console.print(f"[green]Analysis recorded[/green] run={run_id}")
 
 
 @app.command()

@@ -38,6 +38,7 @@ from ..llm.provider import get_provider
 from ..llm.routing import route
 from ..logging import bind, get_logger
 from ..models import ResearchPlan, Session, Task
+from ..models.robin import DiscoveryWorkflow
 from ..orchestrator.events import GLOBAL_BUS
 from ..orchestrator.termination import (
     StabilityTracker,
@@ -86,12 +87,15 @@ class Supervisor:
         n_initial: int = 3,
         wall_clock_seconds: int | None = None,
         resume_session_id: str | None = None,
+        workflow: DiscoveryWorkflow = "general_hypothesis",
     ) -> str:
         conn = await db_mod.connect(self.cfg)
         try:
             if resume_session_id is None:
                 await self._check_research_goal_safety(goal)
-                session = await self._create_session(conn, goal, preferences_text, wall_clock_seconds)
+                session = await self._create_session(
+                    conn, goal, preferences_text, wall_clock_seconds, workflow=workflow
+                )
                 bind(session_id=session.id)
                 log.info(
                     "session_started",
@@ -124,15 +128,7 @@ class Supervisor:
                 session = await sess_repo.fetch(conn, session.id)
                 assert session is not None
 
-                for i in range(n_initial):
-                    await task_repo.enqueue(conn, Task(
-                        id=ids.task_id(), session_id=session.id,
-                        created_at=datetime.now(UTC),
-                        agent="generation", action="CreateInitialHypotheses",
-                        payload={"strategy": "literature", "n": 1},
-                        priority=100, status="pending",
-                        idempotency_key=f"{session.id}::generation::initial::{i}",
-                    ))
+                await self._enqueue_initial_tasks(conn, session, n_initial=n_initial)
             else:
                 session = await sess_repo.fetch(conn, resume_session_id)
                 if session is None:
@@ -196,6 +192,7 @@ class Supervisor:
         goal: str,
         preferences_text: str | None,
         wall_clock_seconds: int | None,
+        workflow: DiscoveryWorkflow = "general_hypothesis",
     ) -> Session:
         sid = ids.session_id()
         now = datetime.now(UTC)
@@ -206,6 +203,7 @@ class Supervisor:
         snap: dict[str, Any] = json.loads(json.dumps(self.cfg.model_dump(exclude={"secrets"})))
         s = Session(
             id=sid, created_at=now, updated_at=now, status="running",
+            workflow=workflow,
             research_goal=goal, research_plan=plan,
             config_snapshot=snap,
             budget_tokens=self.cfg.run.budget_tokens, budget_usd=self.cfg.run.budget_usd,
@@ -268,6 +266,38 @@ class Supervisor:
             (plan.model_dump_json(), datetime.now(UTC).isoformat(), session.id),
         )
         await conn.commit()
+
+    async def _enqueue_initial_tasks(
+        self,
+        conn: aiosqlite.Connection,
+        session: Session,
+        *,
+        n_initial: int,
+    ) -> None:
+        """Seed the queue according to the session workflow profile."""
+        if session.workflow == "therapeutic_discovery":
+            await task_repo.enqueue(conn, Task(
+                id=ids.task_id(),
+                session_id=session.id,
+                created_at=datetime.now(UTC),
+                agent="assay",
+                action="GenerateAssays",
+                payload={"round_index": 1, "num_assays": 10},
+                priority=100,
+                status="pending",
+                idempotency_key=f"{session.id}::assay::generate::1",
+            ))
+            return
+
+        for i in range(n_initial):
+            await task_repo.enqueue(conn, Task(
+                id=ids.task_id(), session_id=session.id,
+                created_at=datetime.now(UTC),
+                agent="generation", action="CreateInitialHypotheses",
+                payload={"strategy": "literature", "n": 1},
+                priority=100, status="pending",
+                idempotency_key=f"{session.id}::generation::initial::{i}",
+            ))
 
     # ----------------------------- main loop ----------------------------- #
 
@@ -480,6 +510,101 @@ class Supervisor:
                     priority=200, status="pending",
                     idempotency_key=f"{session.id}::proximity::{mc}",
                 ))
+        elif result.kind == "assay_created":
+            for assay_id in result.assay_ids:
+                await task_repo.enqueue(conn, Task(
+                    id=ids.task_id(),
+                    session_id=session.id,
+                    created_at=datetime.now(UTC),
+                    agent="assay",
+                    action="EvaluateAssay",
+                    target_id=assay_id,
+                    payload={},
+                    priority=100,
+                    status="pending",
+                    idempotency_key=f"{assay_id}::assay::evaluate",
+                ))
+        elif result.kind == "assay_evaluated":
+            await task_repo.enqueue(conn, Task(
+                id=ids.task_id(),
+                session_id=session.id,
+                created_at=datetime.now(UTC),
+                agent="assay",
+                action="RankAssays",
+                payload={"assay_ids": result.assay_ids},
+                priority=110,
+                status="pending",
+                idempotency_key=f"{session.id}::assay::rank::{','.join(result.assay_ids)}",
+            ))
+        elif result.kind == "assays_ranked":
+            winner = result.extra.get("winner_assay_id") or (result.assay_ids[0] if result.assay_ids else None)
+            if winner:
+                await task_repo.enqueue(conn, Task(
+                    id=ids.task_id(),
+                    session_id=session.id,
+                    created_at=datetime.now(UTC),
+                    agent="candidate",
+                    action="GenerateCandidates",
+                    target_id=winner,
+                    payload={"round_index": 1, "num_candidates": 30},
+                    priority=100,
+                    status="pending",
+                    idempotency_key=f"{session.id}::candidate::generate::{winner}::1",
+                ))
+        elif result.kind == "candidate_created":
+            for candidate_id in result.candidate_ids:
+                await task_repo.enqueue(conn, Task(
+                    id=ids.task_id(),
+                    session_id=session.id,
+                    created_at=datetime.now(UTC),
+                    agent="candidate",
+                    action="EvaluateCandidate",
+                    target_id=candidate_id,
+                    payload={},
+                    priority=100,
+                    status="pending",
+                    idempotency_key=f"{candidate_id}::candidate::evaluate",
+                ))
+        elif result.kind == "candidate_evaluated":
+            await task_repo.enqueue(conn, Task(
+                id=ids.task_id(),
+                session_id=session.id,
+                created_at=datetime.now(UTC),
+                agent="candidate",
+                action="RankCandidates",
+                payload={"candidate_ids": result.candidate_ids},
+                priority=110,
+                status="pending",
+                idempotency_key=f"{session.id}::candidate::rank::{','.join(result.candidate_ids)}",
+            ))
+        elif result.kind == "analysis_completed":
+            for analysis_run_id in result.analysis_run_ids:
+                await task_repo.enqueue(conn, Task(
+                    id=ids.task_id(),
+                    session_id=session.id,
+                    created_at=datetime.now(UTC),
+                    agent="result_interpreter",
+                    action="InterpretResults",
+                    target_id=analysis_run_id,
+                    payload={},
+                    priority=100,
+                    status="pending",
+                    idempotency_key=f"{analysis_run_id}::result_interpreter::interpret",
+                ))
+        elif result.kind == "experiment_insight_created":
+            for insight_id in result.insight_ids:
+                await task_repo.enqueue(conn, Task(
+                    id=ids.task_id(),
+                    session_id=session.id,
+                    created_at=datetime.now(UTC),
+                    agent="candidate",
+                    action="RegenerateCandidatesFromResults",
+                    target_id=insight_id,
+                    payload={"round_index": 2, "num_candidates": 10},
+                    priority=100,
+                    status="pending",
+                    idempotency_key=f"{insight_id}::candidate::regenerate::2",
+                ))
 
     # ----------------------------- decide_next_steps ----------------------------- #
 
@@ -661,6 +786,18 @@ class Supervisor:
             from .metareview import MetaReviewAgent
 
             out["metareview"] = MetaReviewAgent(deps)
+        except ImportError:
+            pass
+        try:
+            from .analysis import AnalysisAgent
+            from .assay import AssayAgent
+            from .candidate import CandidateAgent
+            from .result_interpreter import ResultInterpreterAgent
+
+            out["assay"] = AssayAgent(deps)
+            out["candidate"] = CandidateAgent(deps)
+            out["analysis"] = AnalysisAgent(deps)
+            out["result_interpreter"] = ResultInterpreterAgent(deps)
         except ImportError:
             pass
         return out

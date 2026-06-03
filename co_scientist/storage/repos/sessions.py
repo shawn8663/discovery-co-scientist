@@ -17,15 +17,16 @@ def _now() -> str:
 async def insert(conn: aiosqlite.Connection, s: Session) -> None:
     await conn.execute(
         """INSERT INTO sessions(
-               id, created_at, updated_at, status, research_goal, research_plan,
+               id, created_at, updated_at, status, workflow, research_goal, research_plan,
                config_snapshot, budget_tokens, budget_usd, budget_used_tokens,
                budget_used_usd, wall_deadline, final_overview)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             s.id,
             s.created_at.isoformat(),
             s.updated_at.isoformat(),
             s.status,
+            s.workflow,
             s.research_goal,
             s.research_plan.model_dump_json(),
             json.dumps(s.config_snapshot),
@@ -79,11 +80,13 @@ async def set_final_overview(conn: aiosqlite.Connection, session_id: str, rel_pa
 
 
 def _row_to_session(row: aiosqlite.Row) -> Session:
+    columns = set(row.keys())
     return Session(
         id=row["id"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
         status=row["status"],
+        workflow=row["workflow"] if "workflow" in columns else "general_hypothesis",
         research_goal=row["research_goal"],
         research_plan=ResearchPlan.model_validate_json(row["research_plan"]),
         config_snapshot=json.loads(row["config_snapshot"]),

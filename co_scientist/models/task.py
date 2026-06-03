@@ -7,7 +7,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-TaskAgent = Literal["generation", "reflection", "ranking", "evolution", "proximity", "metareview"]
+TaskAgent = Literal[
+    "generation",
+    "reflection",
+    "ranking",
+    "evolution",
+    "proximity",
+    "metareview",
+    "assay",
+    "candidate",
+    "analysis",
+    "result_interpreter",
+]
 TaskAction = Literal[
     # Generation
     "CreateInitialHypotheses",
@@ -25,6 +36,16 @@ TaskAction = Literal[
     # Meta-review
     "GenerateSystemFeedback",
     "GenerateFinalResearchOverview",
+    # Robin therapeutic discovery
+    "GenerateAssays",
+    "EvaluateAssay",
+    "RankAssays",
+    "GenerateCandidates",
+    "EvaluateCandidate",
+    "RankCandidates",
+    "RegenerateCandidatesFromResults",
+    "AnalyzeExperimentalData",
+    "InterpretResults",
 ]
 TaskStatus = Literal["pending", "leased", "in_progress", "done", "failed", "dead", "cancelled"]
 
@@ -61,6 +82,14 @@ TaskResultKind = Literal[
     "evolution_completed",
     "system_feedback_generated",
     "final_overview_generated",
+    "assay_created",
+    "assay_evaluated",
+    "assays_ranked",
+    "candidate_created",
+    "candidate_evaluated",
+    "candidates_ranked",
+    "analysis_completed",
+    "experiment_insight_created",
     "noop",
 ]
 
@@ -70,4 +99,8 @@ class TaskResult(BaseModel):
     hypothesis_ids: list[str] = Field(default_factory=list)
     review_ids: list[str] = Field(default_factory=list)
     match_ids: list[str] = Field(default_factory=list)
+    assay_ids: list[str] = Field(default_factory=list)
+    candidate_ids: list[str] = Field(default_factory=list)
+    analysis_run_ids: list[str] = Field(default_factory=list)
+    insight_ids: list[str] = Field(default_factory=list)
     extra: dict[str, Any] = Field(default_factory=dict)

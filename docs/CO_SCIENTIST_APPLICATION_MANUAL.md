@@ -32,6 +32,19 @@ The core agents are:
 | Evolution | Create new hypotheses by combining, simplifying, improving feasibility, or reimagining top-ranked ideas. | Derived hypotheses with parent IDs. |
 | Meta-review | Produce periodic system feedback and the final research overview. | System feedback artifacts, final overview markdown, final safety artifact. |
 
+Discovery Co-Scientist also supports a Robin-inspired `therapeutic_discovery`
+workflow. In that profile, the Supervisor starts with assay proposal/evaluation
+instead of generic hypothesis generation, then schedules therapeutic candidate
+generation, candidate evaluation/ranking, controlled analysis artifacts, result
+interpretation, and experiment-informed candidate regeneration.
+
+| Robin-style agent | Main responsibility | Typical outputs |
+| --- | --- | --- |
+| Assay | Generate, evaluate, and rank experimental assay strategies. | Assay proposals, assay evaluations, BTL/rank scores. |
+| Candidate | Generate, evaluate, rank, and regenerate therapeutic candidates. | Candidate proposals, candidate evaluations, rank scores. |
+| Analysis | Register datasets and create controlled analysis-run artifacts. | Analysis run rows, workspace analysis artifacts. |
+| Result Interpreter | Convert analysis summaries into experiment insights. | Positive/negative hits, mechanisms, follow-up assay outlines, constraints. |
+
 ## End-to-End Workflow
 
 ```mermaid

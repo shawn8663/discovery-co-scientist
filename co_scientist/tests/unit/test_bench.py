@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from co_scientist.bench import PRESETS, get_preset
+from co_scientist.bench import BENCHMARK_FIXTURES, PRESETS, get_benchmark_fixture, get_preset
 from co_scientist.bench.runner import (
     BenchCandidate,
     _build_regression_report,
@@ -115,6 +115,30 @@ def test_get_preset_raises_on_unknown_name() -> None:
 
 def test_presets_dict_listed() -> None:
     assert "paper" in PRESETS
+
+
+def test_benchmark_fixtures_include_robin_dry_amd_and_aml_compatibility() -> None:
+    assert {"robin-dry-amd", "aml-general-compatibility"} <= set(BENCHMARK_FIXTURES)
+
+    robin = get_benchmark_fixture("robin-dry-amd")
+    assert robin.workflow == "therapeutic_discovery"
+    assert "dry AMD" in robin.goal
+    assert robin.mock_retrieval
+    assert "assay_generation" in robin.mock_model_outputs
+    assert "candidate_generation" in robin.mock_model_outputs
+    assert {
+        "quality",
+        "cost",
+        "latency",
+        "duplicate_rate",
+        "retrieval_hits",
+        "ranking_agreement",
+    } <= set(robin.expected_metrics)
+
+    aml = get_benchmark_fixture("aml-general-compatibility")
+    assert aml.workflow == "general_hypothesis"
+    assert "AML" in aml.goal or "acute myeloid leukemia" in aml.goal.lower()
+    assert aml.preset == "paper-aml"
 
 
 # ----------------------------- _candidate_cfg ----------------------------- #
@@ -258,6 +282,7 @@ def test_build_regression_report_includes_quality_cost_latency_and_recall() -> N
         "goal": "AML benchmark",
         "judge": "anthropic:judge",
         "n_matches": 4,
+        "ranking_agreement": 0.75,
         "goldset": {"label": "aml_gold", "entities": ["LAT1", "DHODH"]},
         "candidates": [
             {
@@ -308,6 +333,8 @@ def test_build_regression_report_includes_quality_cost_latency_and_recall() -> N
     assert "duplicate" in report.lower()
     assert "retrieval" in report.lower()
     assert "gold-set recall" in report.lower()
+    assert "ranking agreement" in report.lower()
+    assert "0.75" in report
     assert "| pipeline | pipeline |" in report
     assert "| raw | direct |" in report
 

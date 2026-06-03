@@ -35,6 +35,18 @@ TEMPLATES = {
     "evolution.out_of_box": "evolution_out_of_box.md",
     "metareview.system": "metareview_system.md",
     "metareview.final": "metareview_final.md",
+    "robin.assay_query_generation": "robin_assay_query_generation.md",
+    "robin.assay_generation": "robin_assay_generation.md",
+    "robin.assay_evaluation": "robin_assay_evaluation.md",
+    "robin.assay_pairwise_judge": "robin_assay_pairwise_judge.md",
+    "robin.candidate_goal_synthesis": "robin_candidate_goal_synthesis.md",
+    "robin.candidate_query_generation": "robin_candidate_query_generation.md",
+    "robin.candidate_generation": "robin_candidate_generation.md",
+    "robin.candidate_evaluation": "robin_candidate_evaluation.md",
+    "robin.candidate_pairwise_judge": "robin_candidate_pairwise_judge.md",
+    "robin.flow_cytometry_analysis": "robin_flow_cytometry_analysis.md",
+    "robin.rnaseq_analysis": "robin_rnaseq_analysis.md",
+    "robin.result_interpretation": "robin_result_interpretation.md",
 }
 
 
