@@ -46,6 +46,7 @@ from ..orchestrator.termination import (
     should_stop,
     snapshot_top_k,
 )
+from ..retrieval import build_evidence_bundle, latest_evidence_summary
 from ..safety.gates import assess_safety
 from ..storage import db as db_mod
 from ..storage.artifacts import write_text
@@ -129,7 +130,22 @@ class Supervisor:
                 session = await sess_repo.fetch(conn, session.id)
                 assert session is not None
 
-                await self._enqueue_initial_tasks(conn, session, n_initial=n_initial)
+                evidence = await self._build_evidence_bundle(session, tools)
+                await self._emit(conn, session.id, "evidence_bundle_created", {
+                    "artifact_id": evidence.artifact_id,
+                    "artifact_path": evidence.artifact_path,
+                    "n_local_sources": len(evidence.local_sources),
+                    "n_planned_searches": len(evidence.planned_searches),
+                    "clinical_or_translational": evidence.clinical_or_translational,
+                })
+
+                await self._enqueue_initial_tasks(
+                    conn,
+                    session,
+                    n_initial=n_initial,
+                    evidence_summary=evidence.summary,
+                    evidence_bundle_path=evidence.artifact_path,
+                )
             else:
                 session = await sess_repo.fetch(conn, resume_session_id)
                 if session is None:
@@ -257,6 +273,9 @@ class Supervisor:
             idea_attributes=record.get("idea_attributes", []),
             domain_hint=record.get("domain_hint") or None,
             notes=record.get("notes") or None,
+            retrieval_queries=record.get("retrieval_queries", []),
+            clinical_or_translational=bool(record.get("clinical_or_translational", False)),
+            retrieval_notes=record.get("retrieval_notes") or None,
         )
 
     async def _apply_plan(
@@ -274,8 +293,11 @@ class Supervisor:
         session: Session,
         *,
         n_initial: int,
+        evidence_summary: str | None = None,
+        evidence_bundle_path: str | None = None,
     ) -> None:
         """Seed the queue according to the session workflow profile."""
+        evidence_payload = _evidence_payload(evidence_summary, evidence_bundle_path)
         if session.workflow == "therapeutic_discovery":
             await task_repo.enqueue(conn, Task(
                 id=ids.task_id(),
@@ -283,7 +305,7 @@ class Supervisor:
                 created_at=datetime.now(UTC),
                 agent="assay",
                 action="GenerateAssays",
-                payload={"round_index": 1, "num_assays": 10},
+                payload={"round_index": 1, "num_assays": 10, **evidence_payload},
                 priority=100,
                 status="pending",
                 idempotency_key=f"{session.id}::assay::generate::1",
@@ -295,10 +317,17 @@ class Supervisor:
                 id=ids.task_id(), session_id=session.id,
                 created_at=datetime.now(UTC),
                 agent="generation", action="CreateInitialHypotheses",
-                payload={"strategy": "literature", "n": 1},
+                payload={"strategy": "literature", "n": 1, **evidence_payload},
                 priority=100, status="pending",
                 idempotency_key=f"{session.id}::generation::initial::{i}",
             ))
+
+    async def _build_evidence_bundle(
+        self,
+        session: Session,
+        tools: ToolRegistry,
+    ):
+        return await build_evidence_bundle(self.cfg, session, tools)
 
     # ----------------------------- main loop ----------------------------- #
 
@@ -542,6 +571,7 @@ class Supervisor:
         elif result.kind == "assays_ranked":
             winner = result.extra.get("winner_assay_id") or (result.assay_ids[0] if result.assay_ids else None)
             if winner:
+                evidence_summary = latest_evidence_summary(self.cfg, session.id)
                 await task_repo.enqueue(conn, Task(
                     id=ids.task_id(),
                     session_id=session.id,
@@ -549,7 +579,11 @@ class Supervisor:
                     agent="candidate",
                     action="GenerateCandidates",
                     target_id=winner,
-                    payload={"round_index": 1, "num_candidates": 30},
+                    payload={
+                        "round_index": 1,
+                        "num_candidates": 30,
+                        **_evidence_payload(evidence_summary, None),
+                    },
                     priority=100,
                     status="pending",
                     idempotency_key=f"{session.id}::candidate::generate::{winner}::1",
@@ -598,6 +632,7 @@ class Supervisor:
                 ))
         elif result.kind == "experiment_insight_created":
             for insight_id in result.insight_ids:
+                evidence_summary = latest_evidence_summary(self.cfg, session.id)
                 await task_repo.enqueue(conn, Task(
                     id=ids.task_id(),
                     session_id=session.id,
@@ -605,7 +640,11 @@ class Supervisor:
                     agent="candidate",
                     action="RegenerateCandidatesFromResults",
                     target_id=insight_id,
-                    payload={"round_index": 2, "num_candidates": 10},
+                    payload={
+                        "round_index": 2,
+                        "num_candidates": 10,
+                        **_evidence_payload(evidence_summary, None),
+                    },
                     priority=100,
                     status="pending",
                     idempotency_key=f"{insight_id}::candidate::regenerate::2",
@@ -857,6 +896,18 @@ class Supervisor:
 
 
 # ----------------------------- helpers ----------------------------- #
+
+
+def _evidence_payload(
+    evidence_summary: str | None,
+    evidence_bundle_path: str | None,
+) -> dict[str, str]:
+    payload: dict[str, str] = {}
+    if evidence_summary:
+        payload["literature_summary"] = evidence_summary
+    if evidence_bundle_path:
+        payload["evidence_bundle_path"] = evidence_bundle_path
+    return payload
 
 
 def _human_preference(session_id: str, text: str):

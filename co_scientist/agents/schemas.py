@@ -155,6 +155,26 @@ RECORD_RESEARCH_PLAN_TOOL: dict[str, Any] = {
             "idea_attributes": {"type": "array", "items": {"type": "string"}},
             "domain_hint":     {"type": "string"},
             "notes":           {"type": "string"},
+            "retrieval_queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Focused search queries that should seed the evidence bundle. "
+                    "Prefer 3-6 concise queries covering mechanism, disease/model, "
+                    "candidate intervention space, and translational evidence when relevant."
+                ),
+            },
+            "clinical_or_translational": {
+                "type": "boolean",
+                "description": (
+                    "True when clinical studies, patients, therapeutics, diagnostics, "
+                    "translation, safety, or human trials are relevant to the goal."
+                ),
+            },
+            "retrieval_notes": {
+                "type": "string",
+                "description": "Short guidance for prioritizing evidence sources or deduplication.",
+            },
         },
         "required": ["objective", "preferences", "idea_attributes"],
     },

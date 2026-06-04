@@ -20,6 +20,7 @@ from ..ids import artifact_id
 
 ArtifactKind = Literal[
     "project_file",
+    "evidence_bundle",
     "retrieved_literature",
     "dataset",
     "analysis",

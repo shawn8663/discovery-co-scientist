@@ -52,12 +52,24 @@ class GenerationAgent(BaseAgent):
             raise NotImplementedError(f"strategy {strategy!r} lands in a later milestone")
 
         # 1. Render the prompt and run the tool loop with `record_hypothesis` available.
+        evidence_summary = str(task.payload.get("literature_summary") or "").strip()
+        evidence_prefix = (
+            "Use this initial evidence bundle as the starting point. Uploaded "
+            "project files/PDFs are priority background and external hits should "
+            "be deduplicated against them:\n"
+            f"{evidence_summary}\n\n"
+            if evidence_summary else ""
+        )
         articles_block = (
-            "You will gather literature using the available tools (web_search, "
-            "pubmed_search, arxiv_search, europe_pmc_search, web_fetch). Pull "
-            "abstracts for the most relevant items, then synthesize. After you "
-            "have surveyed the literature, call `record_hypothesis` exactly once "
-            "with your proposed hypothesis.\n\n"
+            evidence_prefix
+            + "You will gather literature using the available tools. Start with "
+            "local_pdf_search for uploaded project PDFs when present, then use "
+            "PubMed, Europe PMC/bioRxiv/medRxiv, arXiv, OpenAlex, Paperclip, "
+            "ClinicalTrials.gov, web_search, and web_fetch as available and "
+            "appropriate to the goal. Pull abstracts for the most relevant items, "
+            "deduplicate them against the local/background sources, then synthesize. "
+            "After you have surveyed the literature, call `record_hypothesis` "
+            "exactly once with your proposed hypothesis.\n\n"
             "IMPORTANT — interpreting empty search results: an empty result set "
             "(no hits) is positive evidence that the literature you searched for "
             "does not exist. When the goal requires a candidate with NO prior "

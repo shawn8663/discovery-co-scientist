@@ -40,6 +40,12 @@ class CandidateAgent(BaseAgent):
         assay = await robin_repo.fetch_assay(self.deps.db, assay_id) if assay_id else None
         insight = await robin_repo.fetch_experiment_insight(self.deps.db, insight_id) if insight_id else None
         context_parts = []
+        literature_summary = str(task.payload.get("literature_summary") or "").strip()
+        if literature_summary:
+            context_parts.append(
+                "Initial evidence bundle and retrieval plan:\n"
+                + literature_summary
+            )
         if assay:
             context_parts.append(f"Assay: {assay.strategy_name}\n{assay.reasoning}")
         if insight:

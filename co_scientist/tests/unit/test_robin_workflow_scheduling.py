@@ -95,6 +95,29 @@ async def test_general_session_initializes_current_generation_flow(tmp_cfg, conn
 
 
 @pytest.mark.asyncio
+async def test_initial_tasks_include_evidence_payload_when_available(tmp_cfg, conn) -> None:
+    session = await _make_session(conn)
+
+    await Supervisor(tmp_cfg)._enqueue_initial_tasks(
+        conn,
+        session,
+        n_initial=3,
+        evidence_summary="local PDFs first; PubMed next",
+        evidence_bundle_path="/tmp/evidence.json",
+    )
+
+    async with conn.execute(
+        "SELECT payload FROM tasks WHERE session_id=?",
+        (session.id,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    payload = json.loads(row["payload"])
+    assert payload["literature_summary"] == "local PDFs first; PubMed next"
+    assert payload["evidence_bundle_path"] == "/tmp/evidence.json"
+
+
+@pytest.mark.asyncio
 async def test_robin_followups_advance_assays_candidates_and_insights(tmp_cfg, conn) -> None:
     session = await _make_session(conn)
     supervisor = Supervisor(tmp_cfg)

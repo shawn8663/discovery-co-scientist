@@ -68,7 +68,8 @@ async def test_supervisor_ingests_project_files_before_generation_queue(tmp_path
     with patch("co_scientist.agents.supervisor.get_provider", return_value=MagicMock()):
         await sup.run_session("Use local PDFs", project_files=[pdf], n_initial=2)
 
-    assert [a.title for a in sup.artifacts_seen] == ["seed.pdf"]
+    assert [a.kind for a in sup.artifacts_seen] == ["project_file", "evidence_bundle"]
+    assert sup.artifacts_seen[0].title == "seed.pdf"
     assert sup.pending_tasks_seen["pending"] == 2
 
 

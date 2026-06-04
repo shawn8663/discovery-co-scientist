@@ -24,6 +24,9 @@ class ResearchPlan(BaseModel):
     idea_attributes: list[str] = Field(default_factory=list)
     domain_hint: str | None = None         # e.g. "biology", "chemistry"; informational only
     notes: str | None = None
+    retrieval_queries: list[str] = Field(default_factory=list)
+    clinical_or_translational: bool = False
+    retrieval_notes: str | None = None
 
 
 class Session(BaseModel):

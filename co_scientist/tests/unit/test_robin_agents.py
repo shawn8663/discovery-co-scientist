@@ -186,11 +186,17 @@ REASONING: Experiment-informed regeneration.
             agent="candidate",
             action="GenerateCandidates",
             target_id=assay.id,
-            payload={"round_index": 1, "num_candidates": 1},
+            payload={
+                "round_index": 1,
+                "num_candidates": 1,
+                "literature_summary": "Initial evidence bundle: uploaded files first",
+            },
         )
     )
     assert created.kind == "candidate_created"
     assert len(created.candidate_ids) == 1
+    first_prompt = agent.deps.llm.calls[0][0].user_blocks[0].text
+    assert "Initial evidence bundle: uploaded files first" in first_prompt
 
     evaluated = await agent.execute(
         Task(
