@@ -245,23 +245,31 @@ def run(
     if science_skills_path is not None:
         cfg.science_skills.path = str(science_skills_path)
 
-    # Pre-flight cost estimate
-    from .llm.estimator import estimate as _estimate
-
-    est = _estimate(cfg)
-    console.print(
-        f"[dim]Pre-flight estimate: ${est.total_usd:.2f} "
-            f"(budget ${cfg.run.budget_usd:.2f}, "
-        f"max_ideas={cfg.run.max_ideas}, "
-        f"max_matches_per_idea={cfg.run.max_matches_per_idea})[/dim]"
-    )
-    if est.warning:
-        console.print(f"[yellow]{est.warning}[/yellow]")
-
     prefs = preferences_file.read_text() if preferences_file else None
     from .workspace.ingest import collect_project_files
 
     initial_project_files = collect_project_files(files=project_file, dirs=project_dir)
+
+    # Pre-flight cost estimate
+    from .llm.estimator import (
+        EstimateContext,
+        estimate,
+        format_summary,
+    )
+
+    estimate_context = EstimateContext(
+        workflow=workflow,
+        goal=effective_goal,
+        preferences_text=prefs,
+        project_files=initial_project_files,
+        n_initial=n_initial,
+        wall_clock_seconds=wall_clock,
+    )
+    est = estimate(cfg, context=estimate_context)
+    console.print(f"[dim]{format_summary(est, budget_usd=cfg.run.budget_usd)}[/dim]")
+    if est.warning:
+        console.print(f"[yellow]{est.warning}[/yellow]")
+
     if initial_project_files:
         console.print(
             f"[dim]Preloading {len(initial_project_files)} project file(s) into the session workspace.[/dim]"
