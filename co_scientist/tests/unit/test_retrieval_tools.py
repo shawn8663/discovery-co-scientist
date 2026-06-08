@@ -178,6 +178,51 @@ async def test_openalex_sort_affects_request_and_cache_key(tmp_cfg, monkeypatch)
     ) is None
 
 
+async def test_openalex_supported_sorts_map_to_request_params(tmp_cfg, monkeypatch) -> None:
+    captured_params = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"results": []}
+
+    class CaptureClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def get(self, _url, *, params):
+            captured_params.append(params)
+            return Response()
+
+    monkeypatch.setattr("co_scientist.tools.builtins.openalex.httpx.AsyncClient", CaptureClient)
+
+    cases = [
+        ("relevance", None),
+        ("publication_date", "publication_date:desc"),
+        ("cited_by_count", "cited_by_count:desc"),
+    ]
+    for idx, (sort, expected_param) in enumerate(cases):
+        result = await OpenAlexSearchTool().call(
+            {"query": "AML drug repurposing", "max_results": 2, "sort": sort},
+            ToolCtx(cfg=tmp_cfg, session_id=f"ses_openalex_sort_{idx}"),
+        )
+
+        assert result.is_error is False
+        assert result.content["sort"] == sort
+        if expected_param is None:
+            assert "sort" not in captured_params[idx]
+        else:
+            assert captured_params[idx]["sort"] == expected_param
+
+
 async def test_europe_pmc_recent_sort_affects_request(tmp_cfg, monkeypatch) -> None:
     captured_params = []
 
@@ -207,6 +252,41 @@ async def test_europe_pmc_recent_sort_affects_request(tmp_cfg, monkeypatch) -> N
     result = await EuropePMCSearchTool().call(
         {"query": "AML drug repurposing", "max_results": 2, "sort": "P_PDATE_D desc"},
         ToolCtx(cfg=tmp_cfg, session_id="ses_epmc"),
+    )
+
+    assert result.is_error is False
+    assert captured_params[0]["sort"] == "P_PDATE_D desc"
+
+
+async def test_europe_pmc_recent_mode_maps_to_publication_date_sort(tmp_cfg, monkeypatch) -> None:
+    captured_params = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"resultList": {"result": []}}
+
+    class CaptureClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def get(self, _url, *, params):
+            captured_params.append(params)
+            return Response()
+
+    monkeypatch.setattr("co_scientist.tools.builtins.europe_pmc.httpx.AsyncClient", CaptureClient)
+
+    result = await EuropePMCSearchTool().call(
+        {"query": "AML drug repurposing", "max_results": 2, "sort": "recent"},
+        ToolCtx(cfg=tmp_cfg, session_id="ses_epmc_recent"),
     )
 
     assert result.is_error is False

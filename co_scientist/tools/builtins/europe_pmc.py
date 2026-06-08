@@ -38,7 +38,7 @@ class EuropePMCSearchTool:
         query = args.get("query", "").strip()
         n = int(args.get("max_results") or 10)
         oa = bool(args.get("open_access_only"))
-        sort = str(args.get("sort") or "relevance")
+        sort = _normalize_sort(args.get("sort"))
         if not query:
             return ToolResult(is_error=True, error_message="empty query")
         q = f"({query}) AND OPEN_ACCESS:Y" if oa else query
@@ -87,3 +87,10 @@ class EuropePMCSearchTool:
             result_bytes=len(str(payload)),
             metadata={"retrieval_source": self.name},
         )
+
+
+def _normalize_sort(value: Any) -> str:
+    sort = str(value or "relevance")
+    if sort == "recent":
+        return "P_PDATE_D desc"
+    return sort

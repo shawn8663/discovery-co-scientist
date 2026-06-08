@@ -54,6 +54,23 @@ def test_evidence_retrieval_config_defaults_are_balanced(tmp_cfg) -> None:
     assert cfg.deduplicate_canonical_evidence is True
 
 
+def test_lane_args_use_source_specific_sort_modes(tmp_cfg) -> None:
+    from co_scientist.retrieval.evidence import _lane_args
+
+    assert _lane_args(tmp_cfg, "openalex", "openalex_search", "q", "impact")[
+        "sort"
+    ] == "cited_by_count"
+    assert _lane_args(tmp_cfg, "openalex", "openalex_search", "q", "recent")[
+        "sort"
+    ] == "publication_date"
+    assert _lane_args(tmp_cfg, "pubmed", "pubmed_search", "q", "recent")[
+        "sort"
+    ] == "pub_date"
+    assert _lane_args(tmp_cfg, "paperclip", "paperclip_search", "q", "recent")[
+        "sort"
+    ] == "date"
+
+
 def test_normalize_retrieval_records_extracts_identifiers_and_metrics() -> None:
     from co_scientist.retrieval.evidence import normalize_retrieval_records
 
