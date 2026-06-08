@@ -86,6 +86,33 @@ def test_normalize_retrieval_records_extracts_identifiers_and_metrics() -> None:
     assert record.source_hits[0]["lane"] == "impact"
 
 
+def test_normalize_retrieval_records_strips_doi_url_prefix_variants() -> None:
+    from co_scientist.retrieval.evidence import normalize_retrieval_records
+
+    records = normalize_retrieval_records(
+        source_id="src_plan_005",
+        source_type="openalex",
+        tool="openalex_search",
+        query="somatic mutation aging",
+        lane="relevance",
+        content={
+            "results": [
+                {"doi": "https://doi.org/10.1234/example"},
+                {"doi": "http://doi.org/10.1234/example"},
+                {"doi": "https://dx.doi.org/10.1234/example"},
+                {"doi": "http://dx.doi.org/10.1234/example"},
+            ]
+        },
+    )
+
+    assert [record.identifiers["doi"][0] for record in records] == [
+        "10.1234/example",
+        "10.1234/example",
+        "10.1234/example",
+        "10.1234/example",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_evidence_bundle_prioritizes_project_files_and_plans_sources(tmp_cfg) -> None:
     tmp_cfg.paperclip.enabled = True

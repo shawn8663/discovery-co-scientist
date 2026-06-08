@@ -665,7 +665,12 @@ def _normalize_doi(value: Any) -> str:
     if value is None:
         return ""
     doi = str(value).strip().lower()
-    for prefix in ("https://doi.org/", "http://dx.doi.org/"):
+    for prefix in (
+        "https://doi.org/",
+        "http://doi.org/",
+        "https://dx.doi.org/",
+        "http://dx.doi.org/",
+    ):
         if doi.startswith(prefix):
             return doi.removeprefix(prefix)
     return doi
