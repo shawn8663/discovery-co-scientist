@@ -294,6 +294,124 @@ def run(
 
 
 @app.command()
+def evidence(
+    ctx: typer.Context,
+    goal: str | None = typer.Argument(None, help="Research goal or prompt text."),
+    prompt_file: Path | None = typer.Option(
+        None,
+        "--prompt-file",
+        help="Path to a prompt file. When provided, file content is used as the goal.",
+    ),
+    workflow: str = typer.Option(
+        "general_hypothesis",
+        "--workflow",
+        help="Workflow profile: general_hypothesis or therapeutic_discovery.",
+    ),
+    disease: str | None = typer.Option(
+        None,
+        "--disease",
+        help="Disease name for --workflow therapeutic_discovery when no goal/prompt file is supplied.",
+    ),
+    preferences_file: Path | None = typer.Option(
+        None, "--preferences-file", help="Path to a text file with extra preferences."
+    ),
+    project_file: list[Path] | None = typer.Option(
+        None,
+        "--project-file",
+        help="Project file to ingest before creating the evidence bundle. Repeat for multiple files.",
+    ),
+    project_dir: list[Path] | None = typer.Option(
+        None,
+        "--project-dir",
+        help="Directory of PDFs to ingest before creating the evidence bundle. Repeat for multiple directories.",
+    ),
+    parse_goal: bool = typer.Option(
+        True,
+        "--parse-goal/--no-parse-goal",
+        help="Run the normal LLM parse_goal step before building the bundle.",
+    ),
+) -> None:
+    """Create an evidence bundle preview without starting generation."""
+    cfg, _ = ctx.obj
+    effective_goal = prompt_file.read_text().strip() if prompt_file else goal
+    if workflow == "therapeutic_discovery" and disease and not effective_goal:
+        effective_goal = f"Discover therapeutics for {disease}"
+    if not effective_goal:
+        console.print("[red]Provide GOAL, --prompt-file, or --disease for therapeutic_discovery.[/red]")
+        raise typer.Exit(2)
+    if parse_goal and not has_llm_key(cfg):
+        env_var = provider_key_env(cfg)
+        console.print(
+            f"[red]{env_var} is not set (LLM provider = {cfg.llm.provider}). "
+            "Use --no-parse-goal for a no-LLM evidence preview.[/red]"
+        )
+        raise typer.Exit(1)
+
+    prefs = preferences_file.read_text() if preferences_file else None
+    from .workspace.ingest import collect_project_files
+
+    initial_project_files = collect_project_files(files=project_file, dirs=project_dir)
+
+    async def _do() -> tuple[str, str | None, str]:
+        await db_mod.init_db(cfg)
+        conn = await db_mod.connect(cfg)
+        try:
+            from .agents.base import AgentDeps
+            from .agents.supervisor import Supervisor
+            from .llm.budgets import TokenBudget
+            from .llm.provider import get_provider
+            from .models import ResearchPlan
+            from .storage.repos import sessions as sess_repo
+            from .tools.registry import ToolRegistry
+            from .workspace.ingest import ingest_project_files
+
+            sup = Supervisor(cfg)
+            if parse_goal:
+                await sup._check_research_goal_safety(effective_goal)
+            session = await sup._create_session(
+                conn,
+                effective_goal,
+                prefs,
+                wall_clock_seconds=None,
+                workflow=workflow,  # type: ignore[arg-type]
+            )
+            if initial_project_files:
+                ingest_project_files(cfg, session.id, initial_project_files)
+            tools = ToolRegistry(cfg).discover()
+            if parse_goal:
+                budget = TokenBudget(
+                    cfg=cfg,
+                    budget_tokens=session.budget_tokens,
+                    budget_usd=session.budget_usd,
+                )
+                llm = get_provider(cfg, db=conn, budget=budget)
+                deps = AgentDeps(cfg=cfg, db=conn, llm=llm, tools=tools)
+                plan = await sup._parse_goal(deps, session, effective_goal, prefs)
+            else:
+                plan = ResearchPlan(
+                    objective=effective_goal.strip(),
+                    preferences=[],
+                    idea_attributes=[],
+                    retrieval_queries=[effective_goal.strip()],
+                    clinical_or_translational=workflow == "therapeutic_discovery",
+                )
+            await sup._apply_plan(conn, session, plan)
+            session = await sess_repo.fetch(conn, session.id)
+            assert session is not None
+            bundle = await sup._build_evidence_bundle(session, tools)
+            await sess_repo.set_status(conn, session.id, "done")
+            return session.id, bundle.artifact_path, bundle.summary
+        finally:
+            await conn.close()
+
+    session_id, artifact_path, summary = asyncio.run(_do())
+    console.print(f"[green]Evidence bundle created[/green] session={session_id}")
+    console.print(f"Artifact: {artifact_path}")
+    console.print("[dim]No generation tasks were enqueued.[/dim]")
+    console.print(summary)
+
+
+@app.command()
 def resume(
     ctx: typer.Context,
     session_id: str = typer.Argument(...),
