@@ -36,6 +36,24 @@ def _session(plan: ResearchPlan, *, workflow: DiscoveryWorkflow = "therapeutic_d
     )
 
 
+def test_evidence_retrieval_config_defaults_are_balanced(tmp_cfg) -> None:
+    cfg = tmp_cfg.evidence_retrieval
+
+    assert cfg.depth == "balanced"
+    assert cfg.default_limit == 25
+    assert cfg.local_limit == 20
+    assert cfg.paperclip_limit == 50
+    assert cfg.openalex_limit == 25
+    assert cfg.pubmed_limit == 25
+    assert cfg.europe_pmc_limit == 25
+    assert cfg.arxiv_limit == 15
+    assert cfg.preprint_limit == 15
+    assert cfg.clinical_trials_limit == 25
+    assert cfg.ranking_modes == ["relevance", "recent", "impact"]
+    assert cfg.retain_raw_results is True
+    assert cfg.deduplicate_canonical_evidence is True
+
+
 @pytest.mark.asyncio
 async def test_evidence_bundle_prioritizes_project_files_and_plans_sources(tmp_cfg) -> None:
     tmp_cfg.paperclip.enabled = True

@@ -149,6 +149,30 @@ class WebSearchCfg(BaseModel):
     max_results: int = 8
 
 
+class EvidenceRetrievalCfg(BaseModel):
+    depth: Literal["quick", "balanced", "comprehensive"] = "balanced"
+    default_limit: int = 25
+    local_limit: int = 20
+    paperclip_limit: int = 50
+    openalex_limit: int = 25
+    pubmed_limit: int = 25
+    europe_pmc_limit: int = 25
+    arxiv_limit: int = 15
+    preprint_limit: int = 15
+    clinical_trials_limit: int = 25
+    ranking_modes: list[Literal["relevance", "recent", "impact"]] = Field(
+        default_factory=lambda: ["relevance", "recent", "impact"]
+    )
+    retain_raw_results: bool = True
+    deduplicate_canonical_evidence: bool = True
+    max_canonical_items: int = 200
+    group_limit: int = 25
+    relevance_weight: float = 0.45
+    impact_weight: float = 0.25
+    recency_weight: float = 0.20
+    corroboration_weight: float = 0.10
+
+
 class PaperclipCfg(BaseModel):
     enabled: bool = False
     default_limit: int = 20
@@ -285,6 +309,7 @@ class Config(BaseModel):
     retry: RetryCfg = Field(default_factory=RetryCfg)
     lease: LeaseCfg = Field(default_factory=LeaseCfg)
     web_search: WebSearchCfg = Field(default_factory=WebSearchCfg)
+    evidence_retrieval: EvidenceRetrievalCfg = Field(default_factory=EvidenceRetrievalCfg)
     paperclip: PaperclipCfg = Field(default_factory=PaperclipCfg)
     web_fetch: WebFetchCfg = Field(default_factory=WebFetchCfg)
     code_exec: CodeExecCfg = Field(default_factory=CodeExecCfg)
