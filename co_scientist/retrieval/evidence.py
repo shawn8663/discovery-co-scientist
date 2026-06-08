@@ -81,6 +81,25 @@ class SourceAccountingEntry(BaseModel):
     error_message: str | None = None
 
 
+class EvidenceRecord(BaseModel):
+    canonical_id: str = ""
+    title: str = ""
+    abstract: str = ""
+    authors: str | list[str] = ""
+    year: int | None = None
+    url: str | None = None
+    source_type: str = ""
+    identifiers: dict[str, list[str]] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    source_hits: list[dict[str, Any]] = Field(default_factory=list)
+    relevance_score: float = 0.0
+    impact_score: float = 0.0
+    recency_score: float = 0.0
+    corroboration_score: float = 0.0
+    total_score: float = 0.0
+    groups: list[str] = Field(default_factory=list)
+
+
 class EvidenceBundle(BaseModel):
     session_id: str
     workflow: str
@@ -195,6 +214,62 @@ def latest_evidence_summary(cfg: Config, session_id: str) -> str:
     except (OSError, json.JSONDecodeError):
         return ""
     return str(payload.get("summary") or "")
+
+
+def normalize_retrieval_records(
+    *,
+    source_id: str,
+    source_type: str,
+    tool: str,
+    query: str,
+    lane: str,
+    content: Any,
+) -> list[EvidenceRecord]:
+    """Convert raw retrieval payloads into source-aware evidence records."""
+    if not isinstance(content, dict):
+        return []
+    raw_results = content.get("results")
+    if not isinstance(raw_results, list):
+        return []
+
+    records: list[EvidenceRecord] = []
+    source_hit = {
+        "source_id": source_id,
+        "source_type": source_type,
+        "tool": tool,
+        "query": query,
+        "lane": lane,
+    }
+    for raw in raw_results:
+        if not isinstance(raw, dict):
+            continue
+        identifiers: dict[str, list[str]] = {}
+        doi = _normalize_doi(raw.get("doi"))
+        if doi:
+            identifiers["doi"] = [doi]
+        pmid = raw.get("pmid") or raw.get("pubmed_id")
+        if pmid:
+            identifiers["pmid"] = [str(pmid)]
+        arxiv_id = raw.get("arxiv_id")
+        if arxiv_id:
+            identifiers["arxiv"] = [str(arxiv_id)]
+
+        metrics: dict[str, Any] = {}
+        if "cited_by_count" in raw:
+            metrics["cited_by_count"] = raw["cited_by_count"]
+
+        records.append(EvidenceRecord(
+            title=str(raw.get("title") or raw.get("display_name") or raw.get("name") or ""),
+            abstract=str(raw.get("abstract") or raw.get("summary") or ""),
+            authors=raw.get("authors") or "",
+            year=_safe_int(raw.get("year") or raw.get("publication_year")),
+            url=raw.get("url") or raw.get("abs_url") or raw.get("pubmed_url"),
+            source_type=source_type,
+            identifiers=identifiers,
+            metrics=metrics,
+            source_hits=[dict(source_hit)],
+        ))
+    return records
 
 
 def _write_bundle(bundle: EvidenceBundle) -> None:
@@ -584,6 +659,25 @@ def _extract_identifiers(text: str) -> dict[str, list[str]]:
         "pmid": sorted({m.group(1) for m in _PMID_RE.finditer(text)}),
         "arxiv": sorted({m.group(1) for m in _ARXIV_RE.finditer(text)}),
     }
+
+
+def _normalize_doi(value: Any) -> str:
+    if value is None:
+        return ""
+    doi = str(value).strip().lower()
+    for prefix in ("https://doi.org/", "http://dx.doi.org/"):
+        if doi.startswith(prefix):
+            return doi.removeprefix(prefix)
+    return doi
+
+
+def _safe_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_title(title: str) -> str:

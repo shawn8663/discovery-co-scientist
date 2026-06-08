@@ -54,6 +54,38 @@ def test_evidence_retrieval_config_defaults_are_balanced(tmp_cfg) -> None:
     assert cfg.deduplicate_canonical_evidence is True
 
 
+def test_normalize_retrieval_records_extracts_identifiers_and_metrics() -> None:
+    from co_scientist.retrieval.evidence import normalize_retrieval_records
+
+    records = normalize_retrieval_records(
+        source_id="src_plan_004",
+        source_type="openalex",
+        tool="openalex_search",
+        query="somatic mutation aging",
+        lane="impact",
+        content={
+            "results": [
+                {
+                    "id": "https://openalex.org/W123",
+                    "title": "Somatic mutation in aging",
+                    "doi": "https://doi.org/10.1234/example",
+                    "year": 2024,
+                    "cited_by_count": 120,
+                    "url": "https://example.org/paper",
+                }
+            ]
+        },
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.title == "Somatic mutation in aging"
+    assert record.identifiers["doi"] == ["10.1234/example"]
+    assert record.metrics["cited_by_count"] == 120
+    assert record.source_hits[0]["source_id"] == "src_plan_004"
+    assert record.source_hits[0]["lane"] == "impact"
+
+
 @pytest.mark.asyncio
 async def test_evidence_bundle_prioritizes_project_files_and_plans_sources(tmp_cfg) -> None:
     tmp_cfg.paperclip.enabled = True
