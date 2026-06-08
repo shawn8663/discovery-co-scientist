@@ -148,6 +148,33 @@ async def test_evidence_bundle_records_disabled_optional_sources_without_keys(tm
 
 
 @pytest.mark.asyncio
+async def test_evidence_bundle_plans_relevance_recent_and_impact_lanes(tmp_cfg) -> None:
+    tmp_cfg.paperclip.enabled = True
+    tmp_cfg.secrets.PAPERCLIP_API_KEY = "paperclip-key"
+    tmp_cfg.secrets.OPENALEX_API_KEY = "openalex-key"
+    tmp_cfg.evidence_retrieval.ranking_modes = ["relevance", "recent", "impact"]
+    plan = ResearchPlan(
+        objective="Find somatic mutation accumulation literature",
+        retrieval_queries=["somatic mutation accumulation cancer aging"],
+    )
+    session = _session(plan, workflow="general_hypothesis")
+
+    bundle = await build_evidence_bundle(tmp_cfg, session, ToolRegistry(tmp_cfg).discover())
+
+    lane_keys = [
+        (search.source, search.args.get("lane"), search.args.get("sort"))
+        for search in bundle.planned_searches
+        if search.query == "somatic mutation accumulation cancer aging"
+    ]
+    assert ("paperclip", "relevance", "relevance") in lane_keys
+    assert ("paperclip", "recent", "date") in lane_keys
+    assert ("openalex", "impact", "cited_by_count") in lane_keys
+    assert ("openalex", "recent", "publication_date") in lane_keys
+    assert ("pubmed", "recent", "pub_date") in lane_keys
+    assert all(search.args["max_results"] <= 50 for search in bundle.planned_searches)
+
+
+@pytest.mark.asyncio
 async def test_execute_evidence_searches_updates_source_accounting_and_artifact(tmp_cfg) -> None:
     tmp_cfg.paperclip.enabled = True
     tmp_cfg.secrets.PAPERCLIP_API_KEY = "paperclip-key"
@@ -171,13 +198,17 @@ async def test_execute_evidence_searches_updates_source_accounting_and_artifact(
 
     executed = await execute_evidence_searches(tmp_cfg, session.id, bundle, tools)
 
-    assert [call[0] for call in tools.calls] == [
+    assert [call[0] for call in tools.calls[:4]] == [
         "local_pdf_search",
         "paperclip_search",
         "openalex_search",
         "europe_pmc_search",
-        "europe_pmc_search",
     ]
+    assert len(tools.calls) == len(bundle.planned_searches)
+    call_keys = [(name, args.get("lane"), args.get("sort")) for name, args, _ in tools.calls]
+    assert ("paperclip_search", "recent", "date") in call_keys
+    assert ("openalex_search", "impact", "cited_by_count") in call_keys
+    assert ("europe_pmc_search", "recent", None) in call_keys
     executed_entries = [
         entry for entry in executed.source_accounting
         if entry.source_id.startswith("src_plan_")

@@ -258,88 +258,101 @@ def _planned_searches(
                 source="uploaded_project_files",
                 tool="local_pdf_search",
                 query=query,
-                args={"query": query, "max_results": 8, "max_chars": 4000},
+                args=_lane_args(cfg, "uploaded_project_files", "local_pdf_search", query, "relevance"),
                 reason="Search uploaded PDFs/project files before external retrieval.",
             ))
             priority += 1
 
+    lanes = _unique_lanes(cfg.evidence_retrieval.ranking_modes)
     for query in queries:
-        if "paperclip_search" in names:
-            searches.append(PlannedEvidenceSearch(
-                priority=priority,
-                source="paperclip",
-                tool="paperclip_search",
-                query=query,
-                args={"query": query, "max_results": min(cfg.paperclip.default_limit, 8)},
-                reason=(
-                    "Primary external literature pass; Paperclip SDK mediates "
-                    "search access and returned literature context."
-                ),
-                enabled=cfg.paperclip.enabled and _has_secret(cfg, "PAPERCLIP_API_KEY"),
-                enabled_reason=_secret_reason(cfg, "PAPERCLIP_API_KEY") if cfg.paperclip.enabled else "paperclip disabled in config",
-            ))
-            priority += 1
-        if "openalex_search" in names:
-            searches.append(PlannedEvidenceSearch(
-                priority=priority,
-                source="openalex",
-                tool="openalex_search",
-                query=query,
-                args={"query": query, "max_results": 8},
-                reason="OpenAlex API scholarly graph search after Paperclip.",
-                enabled=_has_secret(cfg, "OPENALEX_API_KEY"),
-                enabled_reason=_secret_reason(cfg, "OPENALEX_API_KEY"),
-            ))
-            priority += 1
-        if "europe_pmc_search" in names:
-            searches.append(PlannedEvidenceSearch(
-                priority=priority,
-                source="europe_pmc",
-                tool="europe_pmc_search",
-                query=query,
-                args=_default_args("europe_pmc_search", query),
-                reason="Europe PMC biomedical literature search after Paperclip and OpenAlex.",
-            ))
-            priority += 1
-        if "pubmed_search" in names:
-            searches.append(PlannedEvidenceSearch(
-                priority=priority,
-                source="pubmed",
-                tool="pubmed_search",
-                query=query,
-                args=_default_args("pubmed_search", query),
-                reason="Peer-reviewed biomedical literature follow-up search.",
-            ))
-            priority += 1
-        if "arxiv_search" in names:
-            searches.append(PlannedEvidenceSearch(
-                priority=priority,
-                source="arxiv",
-                tool="arxiv_search",
-                query=query,
-                args=_default_args("arxiv_search", query),
-                reason="Computational, quantitative biology, and methods literature follow-up search.",
-            ))
-            priority += 1
+        for lane in lanes:
+            if "paperclip_search" in names:
+                searches.append(PlannedEvidenceSearch(
+                    priority=priority,
+                    source="paperclip",
+                    tool="paperclip_search",
+                    query=query,
+                    args=_lane_args(cfg, "paperclip", "paperclip_search", query, lane),
+                    reason=(
+                        "Primary external literature pass; Paperclip SDK mediates "
+                        "search access and returned literature context."
+                    ),
+                    enabled=cfg.paperclip.enabled and _has_secret(cfg, "PAPERCLIP_API_KEY"),
+                    enabled_reason=(
+                        _secret_reason(cfg, "PAPERCLIP_API_KEY")
+                        if cfg.paperclip.enabled
+                        else "paperclip disabled in config"
+                    ),
+                ))
+                priority += 1
+            if "openalex_search" in names:
+                searches.append(PlannedEvidenceSearch(
+                    priority=priority,
+                    source="openalex",
+                    tool="openalex_search",
+                    query=query,
+                    args=_lane_args(cfg, "openalex", "openalex_search", query, lane),
+                    reason="OpenAlex API scholarly graph search after Paperclip.",
+                    enabled=_has_secret(cfg, "OPENALEX_API_KEY"),
+                    enabled_reason=_secret_reason(cfg, "OPENALEX_API_KEY"),
+                ))
+                priority += 1
+            if "europe_pmc_search" in names:
+                searches.append(PlannedEvidenceSearch(
+                    priority=priority,
+                    source="europe_pmc",
+                    tool="europe_pmc_search",
+                    query=query,
+                    args=_lane_args(cfg, "europe_pmc", "europe_pmc_search", query, lane),
+                    reason="Europe PMC biomedical literature search after Paperclip and OpenAlex.",
+                ))
+                priority += 1
+            if "pubmed_search" in names:
+                searches.append(PlannedEvidenceSearch(
+                    priority=priority,
+                    source="pubmed",
+                    tool="pubmed_search",
+                    query=query,
+                    args=_lane_args(cfg, "pubmed", "pubmed_search", query, lane),
+                    reason="Peer-reviewed biomedical literature follow-up search.",
+                ))
+                priority += 1
+            if "arxiv_search" in names:
+                searches.append(PlannedEvidenceSearch(
+                    priority=priority,
+                    source="arxiv",
+                    tool="arxiv_search",
+                    query=query,
+                    args=_lane_args(cfg, "arxiv", "arxiv_search", query, lane),
+                    reason="Computational, quantitative biology, and methods literature follow-up search.",
+                ))
+                priority += 1
+            if bundle.clinical_or_translational and "clinical_trials_search" in names:
+                searches.append(PlannedEvidenceSearch(
+                    priority=priority,
+                    source="clinical_trials",
+                    tool="clinical_trials_search",
+                    query=query,
+                    args=_lane_args(cfg, "clinical_trials", "clinical_trials_search", query, lane),
+                    reason="Clinical/translational goal: inspect registered human studies.",
+                ))
+                priority += 1
         if "europe_pmc_search" in names:
             preprint_query = f'({query}) AND (SRC:PPR OR JOURNAL:"bioRxiv" OR JOURNAL:"medRxiv")'
+            preprint_lane = "recent" if "recent" in lanes else "relevance"
             searches.append(PlannedEvidenceSearch(
                 priority=priority,
                 source="biorxiv_medrxiv",
                 tool="europe_pmc_search",
                 query=preprint_query,
-                args={"query": preprint_query, "max_results": 5},
+                args=_lane_args(
+                    cfg,
+                    "biorxiv_medrxiv",
+                    "europe_pmc_search",
+                    preprint_query,
+                    preprint_lane,
+                ),
                 reason="Explicit life-science preprint follow-up pass through Europe PMC.",
-            ))
-            priority += 1
-        if bundle.clinical_or_translational and "clinical_trials_search" in names:
-            searches.append(PlannedEvidenceSearch(
-                priority=priority,
-                source="clinical_trials",
-                tool="clinical_trials_search",
-                query=query,
-                args={"query": query, "max_results": 8},
-                reason="Clinical/translational goal: inspect registered human studies.",
             ))
             priority += 1
 
@@ -361,14 +374,49 @@ def _queries(plan: ResearchPlan) -> list[str]:
     return out[:6]
 
 
-def _default_args(tool: str, query: str) -> dict[str, Any]:
-    if tool == "pubmed_search":
-        return {"query": query, "max_results": 8, "sort": "relevance"}
-    if tool == "arxiv_search":
-        return {"query": query, "max_results": 6, "sort": "relevance"}
-    if tool == "europe_pmc_search":
-        return {"query": query, "max_results": 8}
-    return {"query": query, "max_results": 8}
+def _unique_lanes(lanes: list[str]) -> list[str]:
+    out: list[str] = []
+    for lane in lanes:
+        if lane not in out:
+            out.append(lane)
+    return out or ["relevance"]
+
+
+def _limit_for_source(cfg: Config, source: str) -> int:
+    limits = {
+        "uploaded_project_files": cfg.evidence_retrieval.local_limit,
+        "paperclip": cfg.evidence_retrieval.paperclip_limit,
+        "openalex": cfg.evidence_retrieval.openalex_limit,
+        "pubmed": cfg.evidence_retrieval.pubmed_limit,
+        "europe_pmc": cfg.evidence_retrieval.europe_pmc_limit,
+        "arxiv": cfg.evidence_retrieval.arxiv_limit,
+        "biorxiv_medrxiv": cfg.evidence_retrieval.preprint_limit,
+        "clinical_trials": cfg.evidence_retrieval.clinical_trials_limit,
+    }
+    return limits.get(source, cfg.evidence_retrieval.default_limit)
+
+
+def _lane_args(cfg: Config, source: str, tool: str, query: str, lane: str) -> dict[str, Any]:
+    args: dict[str, Any] = {
+        "query": query,
+        "max_results": _limit_for_source(cfg, source),
+        "lane": lane,
+    }
+    if source == "uploaded_project_files":
+        args["max_chars"] = 4000
+    if tool == "paperclip_search":
+        args["sort"] = "date" if lane == "recent" else "relevance"
+    elif tool == "openalex_search":
+        args["sort"] = {
+            "relevance": "relevance",
+            "recent": "publication_date",
+            "impact": "cited_by_count",
+        }.get(lane, "relevance")
+    elif tool == "pubmed_search":
+        args["sort"] = "pub_date" if lane == "recent" else "relevance"
+    elif tool == "arxiv_search":
+        args["sort"] = "submitted" if lane == "recent" else "relevance"
+    return args
 
 
 def _clinical_or_translational(plan: ResearchPlan, workflow: str) -> bool:
