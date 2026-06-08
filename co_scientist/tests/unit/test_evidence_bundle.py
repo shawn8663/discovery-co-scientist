@@ -5,12 +5,18 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from co_scientist.models import ResearchPlan, Session
 from co_scientist.models.robin import DiscoveryWorkflow
-from co_scientist.retrieval import build_evidence_bundle, latest_evidence_summary
+from co_scientist.retrieval import (
+    build_evidence_bundle,
+    execute_evidence_searches,
+    latest_evidence_summary,
+)
+from co_scientist.tools.base import ToolResult
 from co_scientist.tools.registry import ToolRegistry
 from co_scientist.workspace import ScientistWorkspace
 
@@ -121,3 +127,65 @@ async def test_evidence_bundle_records_disabled_optional_sources_without_keys(tm
         if entry.status == "disabled"
     ]
     assert {entry.source_type for entry in disabled_accounting} == {"openalex", "paperclip"}
+
+
+@pytest.mark.asyncio
+async def test_execute_evidence_searches_updates_source_accounting_and_artifact(tmp_cfg) -> None:
+    tmp_cfg.paperclip.enabled = True
+    tmp_cfg.secrets.PAPERCLIP_API_KEY = "paperclip-key"
+    tmp_cfg.secrets.OPENALEX_API_KEY = "openalex-key"
+    plan = ResearchPlan(
+        objective="Find somatic mutation accumulation literature",
+        retrieval_queries=["somatic mutation accumulation cancer aging"],
+    )
+    session = _session(plan, workflow="general_hypothesis")
+    tools = _FakeRegistry(
+        [
+            "local_pdf_search",
+            "paperclip_search",
+            "openalex_search",
+            "europe_pmc_search",
+        ]
+    )
+
+    bundle = await build_evidence_bundle(tmp_cfg, session, tools)
+    assert {entry.status for entry in bundle.source_accounting} == {"planned"}
+
+    executed = await execute_evidence_searches(tmp_cfg, session.id, bundle, tools)
+
+    assert [call[0] for call in tools.calls] == [
+        "local_pdf_search",
+        "paperclip_search",
+        "openalex_search",
+        "europe_pmc_search",
+        "europe_pmc_search",
+    ]
+    executed_entries = [
+        entry for entry in executed.source_accounting
+        if entry.source_id.startswith("src_plan_")
+    ]
+    assert {entry.status for entry in executed_entries} == {"executed"}
+    assert all(entry.result_count == 2 for entry in executed_entries)
+    assert "Executed source results:" in executed.summary
+
+    payload = json.loads(Path(executed.artifact_path).read_text())
+    assert payload["source_accounting"][1]["status"] == "executed"
+    assert payload["source_accounting"][1]["result_count"] == 2
+
+
+class _FakeRegistry:
+    def __init__(self, names: list[str]) -> None:
+        self.names = names
+        self.calls = []
+
+    def all(self):
+        return [SimpleNamespace(name=name) for name in self.names]
+
+    async def call(self, name, args, ctx):
+        self.calls.append((name, args, ctx.session_id))
+        return ToolResult(
+            content={"query": args["query"], "n": 2, "results": [{"title": "A"}, {"title": "B"}]},
+            duration_ms=7,
+            result_bytes=128,
+            metadata={"retrieval_source": name, "cache_hit": False},
+        )

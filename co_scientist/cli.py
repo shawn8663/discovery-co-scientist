@@ -352,7 +352,7 @@ def evidence(
 
     initial_project_files = collect_project_files(files=project_file, dirs=project_dir)
 
-    async def _do() -> tuple[str, str | None, str]:
+    async def _do() -> tuple[str, str | None, str, dict[str, int]]:
         await db_mod.init_db(cfg)
         conn = await db_mod.connect(cfg)
         try:
@@ -398,15 +398,29 @@ def evidence(
             await sup._apply_plan(conn, session, plan)
             session = await sess_repo.fetch(conn, session.id)
             assert session is not None
+            from .retrieval import execute_evidence_searches
+
             bundle = await sup._build_evidence_bundle(session, tools)
+            bundle = await execute_evidence_searches(cfg, session.id, bundle, tools)
             await sess_repo.set_status(conn, session.id, "done")
-            return session.id, bundle.artifact_path, bundle.summary
+            result_counts = {
+                "executed": sum(1 for entry in bundle.source_accounting if entry.status == "executed"),
+                "failed": sum(1 for entry in bundle.source_accounting if entry.status == "failed"),
+                "disabled": sum(1 for entry in bundle.source_accounting if entry.status == "disabled"),
+            }
+            return session.id, bundle.artifact_path, bundle.summary, result_counts
         finally:
             await conn.close()
 
-    session_id, artifact_path, summary = asyncio.run(_do())
+    session_id, artifact_path, summary, result_counts = asyncio.run(_do())
     console.print(f"[green]Evidence bundle created[/green] session={session_id}")
     console.print(f"Artifact: {artifact_path}")
+    console.print(
+        "Searches: "
+        f"{result_counts['executed']} executed, "
+        f"{result_counts['failed']} failed, "
+        f"{result_counts['disabled']} disabled"
+    )
     console.print("[dim]No generation tasks were enqueued.[/dim]")
     console.print(summary)
 

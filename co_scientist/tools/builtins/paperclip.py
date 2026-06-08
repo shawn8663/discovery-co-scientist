@@ -8,8 +8,11 @@ tools.
 from __future__ import annotations
 
 import asyncio
+import re
+import shlex
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from ...config import Config
@@ -163,15 +166,109 @@ class PaperclipMapTool:
         return out
 
 
+@dataclass
+class _PaperclipExecuteResult:
+    output: str
+    result_id: str | None = None
+    raw: Any = None
+    exit_code: int = 0
+    elapsed_ms: int | None = None
+
+
+class _PaperclipSdkClient:
+    def search(self, query: str, **kwargs: Any) -> _PaperclipExecuteResult:
+        raw = _search_raw(query, kwargs)
+        return _paperclip_execute("search", raw, timeout=int(kwargs.get("timeout") or 120))
+
+    def lookup(self, field: str, value: str, **kwargs: Any) -> _PaperclipExecuteResult:
+        parts = [shlex.quote(field), shlex.quote(value)]
+        limit = kwargs.get("limit")
+        if limit:
+            parts.extend(["-n", str(limit)])
+        return _paperclip_execute(
+            "lookup",
+            " ".join(parts),
+            timeout=int(kwargs.get("timeout") or 120),
+        )
+
+    def map_(self, question: str, **kwargs: Any) -> list[_PaperclipExecuteResult]:
+        raw = shlex.quote(question)
+        from_results = str(kwargs.get("from_results") or "").strip()
+        if from_results:
+            raw += f" --from-results {shlex.quote(from_results)}"
+        result = _paperclip_execute("map", raw, timeout=int(kwargs.get("timeout") or 300))
+        return [result]
+
+
 def _paperclip_client_from_env() -> Any:
     try:
-        from gxl_paperclip import PaperclipClient
+        import gxl_paperclip  # noqa: F401
     except ImportError as e:
         raise ImportError(
             "Paperclip SDK is not installed; install the paperclip extra with "
             "`uv sync --extra paperclip` or install `gxl-paperclip`."
         ) from e
-    return PaperclipClient.from_env()
+    return _PaperclipSdkClient()
+
+
+def _search_raw(query: str, kwargs: dict[str, Any]) -> str:
+    parts = [shlex.quote(query)]
+    limit = kwargs.get("limit")
+    if limit:
+        parts.extend(["-n", str(limit)])
+    for name in ("source", "since", "sort", "mode"):
+        value = kwargs.get(name)
+        if value not in (None, ""):
+            parts.extend([f"--{name}", shlex.quote(str(value))])
+    for name in ("exact", "all"):
+        if kwargs.get(name):
+            parts.append(f"--{name}")
+    return " ".join(parts)
+
+
+def _paperclip_execute(command: str, raw: str, *, timeout: int) -> _PaperclipExecuteResult:
+    try:
+        import requests
+        from gxl_paperclip.cli import _get_base_url, _get_headers
+        from gxl_paperclip.credentials import Credentials
+    except ImportError as e:
+        raise ImportError(
+            "Paperclip SDK is not installed; install the paperclip extra with "
+            "`uv sync --extra paperclip` or install `gxl-paperclip`."
+        ) from e
+
+    if not Credentials.load():
+        raise RuntimeError(
+            "Paperclip CLI credentials are not configured; run `paperclip login` "
+            "inside the Discovery Co-Scientist environment. The installed "
+            "gxl-paperclip SDK uses OAuth credentials for execution rather than "
+            "PAPERCLIP_API_KEY."
+        )
+
+    base = _get_base_url()
+    response = requests.post(
+        f"{base}/api/cli/execute",
+        json={"command": command, "raw": raw},
+        headers=_get_headers(),
+        timeout=timeout,
+    )
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("detail", response.text)
+        except Exception:
+            detail = response.text[:500]
+        raise RuntimeError(f"Paperclip {command} failed ({response.status_code}): {detail}")
+    data = response.json()
+    output = str(data.get("output") or "")
+    result_id = data.get("result_id")
+    records = _records_from_output(output)
+    return _PaperclipExecuteResult(
+        output=output,
+        result_id=str(result_id) if result_id else None,
+        raw={"results": records},
+        exit_code=int(data.get("exit_code") or 0),
+        elapsed_ms=data.get("elapsed_ms"),
+    )
 
 
 async def _run_paperclip_call(fn: Callable[[Any], Any]) -> ToolResult:
@@ -248,6 +345,47 @@ def _records_from_raw(raw: Any) -> list[dict[str, Any]]:
     if isinstance(raw, list):
         return [_record_dict(record) for record in raw]
     return []
+
+
+def _records_from_output(output: str) -> list[dict[str, Any]]:
+    text = _strip_ansi(output)
+    records: list[dict[str, Any]] = []
+    entries = re.split(r"\n(?=\s+\d+\.\s)", text)
+    for entry in entries:
+        lines = [line.strip() for line in entry.strip().splitlines() if line.strip()]
+        if not lines:
+            continue
+        title_match = re.match(r"\s*(\d+)\.\s+(.+)", lines[0])
+        if not title_match:
+            continue
+        record: dict[str, Any] = {"title": title_match.group(2).strip()}
+        for line in lines[1:]:
+            if line.startswith("https://"):
+                record.setdefault("url", line)
+            elif line.startswith("doi:"):
+                record.setdefault("doi", line[4:].strip())
+                record.setdefault("url", f"https://doi.org/{line[4:].strip()}")
+            elif line.startswith('"'):
+                record["abstract"] = line.strip('"')
+            elif "·" in line:
+                parts = [part.strip() for part in line.split("·")]
+                if parts:
+                    record["id"] = parts[0]
+                if len(parts) >= 2:
+                    record["source"] = parts[1]
+                if len(parts) >= 3:
+                    record["date"] = parts[2]
+            elif "authors" not in record:
+                record["authors"] = line
+        records.append(record)
+    return records
+
+
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 def _record_dict(record: Any) -> dict[str, Any]:

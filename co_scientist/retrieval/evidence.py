@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from ..config import Config
 from ..ids import artifact_id
 from ..models import ResearchPlan, Session
+from ..tools.base import ToolCtx
 from ..tools.registry import ToolRegistry
 from ..workspace import ScientistWorkspace, WorkspaceArtifact
 
@@ -73,6 +74,11 @@ class SourceAccountingEntry(BaseModel):
     reason: str = ""
     enabled_reason: str = ""
     provenance: dict[str, Any] = Field(default_factory=dict)
+    result_count: int | None = None
+    duration_ms: int | None = None
+    result_bytes: int | None = None
+    result_metadata: dict[str, Any] = Field(default_factory=dict)
+    error_message: str | None = None
 
 
 class EvidenceBundle(BaseModel):
@@ -134,7 +140,46 @@ async def build_evidence_bundle(
     )
     bundle.artifact_id = artifact.id
     bundle.artifact_path = str(path)
-    path.write_text(json.dumps(bundle.model_dump(mode="json"), indent=2, sort_keys=True) + "\n")
+    _write_bundle(bundle)
+    return bundle
+
+
+async def execute_evidence_searches(
+    cfg: Config,
+    session_id: str,
+    bundle: EvidenceBundle,
+    tools: ToolRegistry,
+) -> EvidenceBundle:
+    """Execute enabled planned searches and persist result accounting."""
+    for entry in bundle.source_accounting:
+        if not entry.source_id.startswith("src_plan_"):
+            continue
+        if entry.status == "disabled":
+            continue
+        if not entry.tool:
+            entry.status = "failed"
+            entry.error_message = "missing tool name"
+            continue
+        result = await tools.call(
+            entry.tool,
+            dict(entry.args),
+            ToolCtx(cfg=cfg, session_id=session_id, run_id=entry.source_id),
+        )
+        entry.duration_ms = result.duration_ms
+        entry.result_bytes = result.result_bytes
+        entry.result_metadata = dict(result.metadata or {})
+        if result.artifact_path:
+            entry.path = result.artifact_path
+        if result.is_error:
+            entry.status = "failed"
+            entry.error_message = result.error_message or "tool call failed"
+            entry.result_count = 0
+        else:
+            entry.status = "executed"
+            entry.result_count = _result_count(result.content)
+            entry.error_message = None
+    bundle.summary = _render_summary(bundle)
+    _write_bundle(bundle)
     return bundle
 
 
@@ -150,6 +195,27 @@ def latest_evidence_summary(cfg: Config, session_id: str) -> str:
     except (OSError, json.JSONDecodeError):
         return ""
     return str(payload.get("summary") or "")
+
+
+def _write_bundle(bundle: EvidenceBundle) -> None:
+    if not bundle.artifact_path:
+        return
+    path = Path(bundle.artifact_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(bundle.model_dump(mode="json"), indent=2, sort_keys=True) + "\n")
+
+
+def _result_count(content: Any) -> int:
+    if isinstance(content, dict):
+        n = content.get("n")
+        if isinstance(n, int):
+            return n
+        results = content.get("results")
+        if isinstance(results, list):
+            return len(results)
+    if isinstance(content, list):
+        return len(content)
+    return 0
 
 
 def _catalog_local_sources(cfg: Config, session_id: str) -> list[LocalEvidenceSource]:
@@ -397,9 +463,21 @@ def _render_summary(bundle: EvidenceBundle) -> str:
     if disabled:
         disabled_sources = sorted({f"{s.source} ({s.enabled_reason})" for s in disabled})
         lines.append("- Optional sources not enabled: " + "; ".join(disabled_sources))
+    result_entries = [
+        entry for entry in bundle.source_accounting
+        if entry.status in {"executed", "failed"}
+    ]
+    if result_entries:
+        executed = [entry for entry in result_entries if entry.status == "executed"]
+        failed = [entry for entry in result_entries if entry.status == "failed"]
+        total_results = sum(entry.result_count or 0 for entry in executed)
+        lines.append(
+            f"- Executed source results: {len(executed)} executed, "
+            f"{len(failed)} failed, {total_results} total result records"
+        )
     ledger_preview = [
         entry for entry in bundle.source_accounting
-        if entry.status in {"planned", "disabled"}
+        if entry.status != "local_cataloged"
     ][:24]
     if ledger_preview:
         lines.append("- Traceable source ledger:")
@@ -407,7 +485,12 @@ def _render_summary(bundle: EvidenceBundle) -> str:
             status = entry.status
             tool = entry.tool or entry.source_type
             query = (entry.query or "").replace("\n", " ")[:120]
-            lines.append(f"  - {entry.source_id} [{status}] {tool}: {query}")
+            suffix = ""
+            if entry.status == "executed":
+                suffix = f" ({entry.result_count or 0} results)"
+            elif entry.status == "failed" and entry.error_message:
+                suffix = f" (failed: {entry.error_message[:80]})"
+            lines.append(f"  - {entry.source_id} [{status}] {tool}: {query}{suffix}")
         remaining = len(bundle.source_accounting) - len([e for e in bundle.source_accounting if e.status == "local_cataloged"]) - len(ledger_preview)
         if remaining > 0:
             lines.append(f"  - ... {remaining} additional planned source entries in the evidence bundle artifact")

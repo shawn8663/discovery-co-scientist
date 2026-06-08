@@ -6,6 +6,7 @@ from .evidence import (
     PlannedEvidenceSearch,
     SourceAccountingEntry,
     build_evidence_bundle,
+    execute_evidence_searches,
     latest_evidence_summary,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "PlannedEvidenceSearch",
     "SourceAccountingEntry",
     "build_evidence_bundle",
+    "execute_evidence_searches",
     "latest_evidence_summary",
 ]
