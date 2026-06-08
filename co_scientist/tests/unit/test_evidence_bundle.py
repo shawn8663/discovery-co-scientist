@@ -113,6 +113,35 @@ def test_normalize_retrieval_records_strips_doi_url_prefix_variants() -> None:
     ]
 
 
+def test_canonical_evidence_merges_duplicate_records_by_doi_and_preserves_hits(tmp_cfg) -> None:
+    from co_scientist.retrieval.evidence import EvidenceRecord, build_canonical_evidence
+
+    records = [
+        EvidenceRecord(
+            title="Somatic mutation in aging",
+            year=2024,
+            identifiers={"doi": ["10.1234/example"]},
+            metrics={"cited_by_count": 120},
+            source_hits=[{"source_id": "src_plan_001", "source_type": "openalex", "lane": "impact"}],
+        ),
+        EvidenceRecord(
+            title="Somatic mutation in aging.",
+            year=2024,
+            identifiers={"doi": ["10.1234/example"]},
+            source_hits=[{"source_id": "src_plan_002", "source_type": "pubmed", "lane": "relevance"}],
+        ),
+    ]
+
+    canonical = build_canonical_evidence(tmp_cfg, records)
+
+    assert len(canonical) == 1
+    item = canonical[0]
+    assert item.canonical_id.startswith("doi:10.1234/example")
+    assert len(item.source_hits) == 2
+    assert item.metrics["cited_by_count"] == 120
+    assert "highest_impact" in item.groups
+
+
 @pytest.mark.asyncio
 async def test_evidence_bundle_prioritizes_project_files_and_plans_sources(tmp_cfg) -> None:
     tmp_cfg.paperclip.enabled = True

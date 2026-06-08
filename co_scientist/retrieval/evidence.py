@@ -272,6 +272,145 @@ def normalize_retrieval_records(
     return records
 
 
+def build_canonical_evidence(cfg: Config, records: list[EvidenceRecord]) -> list[EvidenceRecord]:
+    """Deduplicate normalized evidence records and assign canonical scores."""
+    canonical_by_key: dict[str, EvidenceRecord] = {}
+    key_order: list[str] = []
+    for i, record in enumerate(records):
+        key = _canonical_key(record) or f"record:{i}"
+        if key not in canonical_by_key:
+            canonical = record.model_copy(deep=True)
+            canonical.canonical_id = key
+            canonical_by_key[key] = canonical
+            key_order.append(key)
+            continue
+        _merge_evidence_record(canonical_by_key[key], record)
+
+    canonical = [canonical_by_key[key] for key in key_order]
+    _score_and_group_records(cfg, canonical)
+    canonical.sort(key=lambda item: item.total_score, reverse=True)
+    return canonical[:cfg.evidence_retrieval.max_canonical_items]
+
+
+def _canonical_key(record: EvidenceRecord) -> str:
+    for kind in ("doi", "pmid", "arxiv"):
+        values = record.identifiers.get(kind, [])
+        if values:
+            value = str(values[0]).strip()
+            if value:
+                if kind == "doi":
+                    value = _normalize_doi(value)
+                return f"{kind}:{value.lower()}"
+    if record.url:
+        return f"url:{record.url.strip()}"
+    title = _normalize_title(record.title)
+    return f"title:{title}" if title else ""
+
+
+def _merge_identifier_dicts(
+    a: dict[str, list[str]],
+    b: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = {kind: list(values) for kind, values in a.items()}
+    for kind, values in b.items():
+        out = merged.setdefault(kind, [])
+        seen = {str(value) for value in out}
+        for value in values:
+            value_text = str(value)
+            if value_text in seen:
+                continue
+            out.append(value)
+            seen.add(value_text)
+    return {kind: values for kind, values in merged.items() if values}
+
+
+def _merge_evidence_record(target: EvidenceRecord, incoming: EvidenceRecord) -> None:
+    if not target.abstract and incoming.abstract:
+        target.abstract = incoming.abstract
+    if target.year is None and incoming.year is not None:
+        target.year = incoming.year
+    if not target.url and incoming.url:
+        target.url = incoming.url
+    if not target.source_type and incoming.source_type:
+        target.source_type = incoming.source_type
+    if not target.authors and incoming.authors:
+        target.authors = incoming.authors
+
+    target.identifiers = _merge_identifier_dicts(target.identifiers, incoming.identifiers)
+    target.metrics = _merge_metrics(target.metrics, incoming.metrics)
+    target.source_hits.extend(dict(hit) for hit in incoming.source_hits)
+
+
+def _merge_metrics(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(a)
+    for key, value in b.items():
+        if key == "cited_by_count":
+            merged_count = _safe_int(merged.get(key))
+            incoming_count = _safe_int(value)
+            if incoming_count is None:
+                continue
+            if merged_count is None or incoming_count > merged_count:
+                merged[key] = incoming_count
+            continue
+        if key not in merged or merged[key] in (None, ""):
+            merged[key] = value
+    return merged
+
+
+def _score_and_group_records(cfg: Config, records: list[EvidenceRecord]) -> None:
+    citation_counts = [_safe_int(record.metrics.get("cited_by_count")) or 0 for record in records]
+    max_citations = max(citation_counts, default=0)
+    current_year = datetime.now(UTC).year
+    weights = cfg.evidence_retrieval
+    for record, cited_by_count in zip(records, citation_counts, strict=True):
+        source_types = _source_types_for_record(record)
+        has_relevance_hit = any(hit.get("lane") == "relevance" for hit in record.source_hits)
+        record.relevance_score = 1.0 if has_relevance_hit else 0.4
+        record.impact_score = cited_by_count / max_citations if max_citations else 0.0
+        record.recency_score = _recency_score(record.year, current_year)
+        record.corroboration_score = min(1.0, len(source_types) / 3)
+        record.total_score = (
+            weights.relevance_weight * record.relevance_score
+            + weights.impact_weight * record.impact_score
+            + weights.recency_weight * record.recency_score
+            + weights.corroboration_weight * record.corroboration_score
+        )
+        record.groups = _groups_for_record(record)
+
+
+def _recency_score(year: int | None, current_year: int) -> float:
+    if year is None:
+        return 0.0
+    age = max(0, current_year - year)
+    return max(0.0, 1.0 - (age / 20))
+
+
+def _groups_for_record(record: EvidenceRecord) -> list[str]:
+    groups = {"highest_relevance"}
+    cited_by_count = _safe_int(record.metrics.get("cited_by_count")) or 0
+    if record.impact_score >= 0.75 or cited_by_count >= 100:
+        groups.add("highest_impact")
+    if record.recency_score >= 0.8:
+        groups.add("newest")
+    source_types = _source_types_for_record(record)
+    if source_types.intersection({"biorxiv_medrxiv", "arxiv"}):
+        groups.add("preprints")
+    if "clinical_trials" in source_types:
+        groups.add("clinical_translational")
+    return sorted(groups)
+
+
+def _source_types_for_record(record: EvidenceRecord) -> set[str]:
+    source_types = {
+        str(hit.get("source_type"))
+        for hit in record.source_hits
+        if hit.get("source_type")
+    }
+    if record.source_type:
+        source_types.add(record.source_type)
+    return source_types
+
+
 def _write_bundle(bundle: EvidenceBundle) -> None:
     if not bundle.artifact_path:
         return
