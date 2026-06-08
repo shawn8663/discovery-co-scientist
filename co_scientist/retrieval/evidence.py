@@ -307,7 +307,7 @@ def _planned_searches(
                     reason="Europe PMC biomedical literature search after Paperclip and OpenAlex.",
                 ))
                 priority += 1
-            if "pubmed_search" in names:
+            if "pubmed_search" in names and lane in {"relevance", "recent"}:
                 searches.append(PlannedEvidenceSearch(
                     priority=priority,
                     source="pubmed",
@@ -317,7 +317,7 @@ def _planned_searches(
                     reason="Peer-reviewed biomedical literature follow-up search.",
                 ))
                 priority += 1
-            if "arxiv_search" in names:
+            if "arxiv_search" in names and lane in {"relevance", "recent"}:
                 searches.append(PlannedEvidenceSearch(
                     priority=priority,
                     source="arxiv",

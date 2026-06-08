@@ -189,7 +189,30 @@ async def test_evidence_bundle_plans_relevance_recent_and_impact_lanes(tmp_cfg) 
         ("relevance", None),
         ("recent", "P_PDATE_D desc"),
     ]
-    assert ("pubmed", "recent", "pub_date") in lane_keys
+    pubmed_lanes = [
+        (search.args.get("lane"), search.args.get("sort"))
+        for search in bundle.planned_searches
+        if (
+            search.source == "pubmed"
+            and search.query == "somatic mutation accumulation cancer aging"
+        )
+    ]
+    assert pubmed_lanes == [
+        ("relevance", "relevance"),
+        ("recent", "pub_date"),
+    ]
+    arxiv_lanes = [
+        (search.args.get("lane"), search.args.get("sort"))
+        for search in bundle.planned_searches
+        if (
+            search.source == "arxiv"
+            and search.query == "somatic mutation accumulation cancer aging"
+        )
+    ]
+    assert arxiv_lanes == [
+        ("relevance", "relevance"),
+        ("recent", "submitted"),
+    ]
     preprint_searches = [
         search for search in bundle.planned_searches
         if search.source == "biorxiv_medrxiv"
