@@ -330,15 +330,41 @@ def evidence(
         "--parse-goal/--no-parse-goal",
         help="Run the normal LLM parse_goal step before building the bundle.",
     ),
+    max_results_per_source: int | None = typer.Option(
+        None,
+        "--max-results-per-source",
+        min=1,
+        max=1000,
+        help="Override default result limit for each external evidence source.",
+    ),
+    ranking_modes: str | None = typer.Option(
+        None,
+        "--ranking-modes",
+        help="Comma-separated retrieval lanes: relevance,recent,impact.",
+    ),
 ) -> None:
     """Create an evidence bundle preview without starting generation."""
     cfg, _ = ctx.obj
-    effective_goal = prompt_file.read_text().strip() if prompt_file else goal
+    prompt_text = prompt_file.read_text() if prompt_file else None
+    effective_goal = prompt_text.strip() if prompt_text is not None else goal
     if workflow == "therapeutic_discovery" and disease and not effective_goal:
         effective_goal = f"Discover therapeutics for {disease}"
     if not effective_goal:
         console.print("[red]Provide GOAL, --prompt-file, or --disease for therapeutic_discovery.[/red]")
         raise typer.Exit(2)
+    from .retrieval.evidence import apply_retrieval_overrides, apply_retrieval_settings_from_text
+
+    try:
+        if prompt_text is not None:
+            apply_retrieval_settings_from_text(cfg, prompt_text)
+        apply_retrieval_overrides(
+            cfg,
+            max_results_per_source=max_results_per_source,
+            ranking_modes=ranking_modes,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
     if parse_goal and not has_llm_key(cfg):
         env_var = provider_key_env(cfg)
         console.print(
@@ -351,6 +377,11 @@ def evidence(
     from .workspace.ingest import collect_project_files
 
     initial_project_files = collect_project_files(files=project_file, dirs=project_dir)
+    console.print(
+        "Evidence retrieval: "
+        f"max_results_per_source={cfg.evidence_retrieval.default_limit}, "
+        f"ranking_modes={','.join(cfg.evidence_retrieval.ranking_modes)}"
+    )
 
     async def _do() -> tuple[str, str | None, str, dict[str, int]]:
         await db_mod.init_db(cfg)

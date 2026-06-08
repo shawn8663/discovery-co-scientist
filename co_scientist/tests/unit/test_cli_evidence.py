@@ -83,6 +83,104 @@ def test_evidence_command_executes_bundle_without_enqueuing_tasks(tmp_path: Path
     assert payload["source_accounting"][1]["result_count"] == 1
 
 
+def test_evidence_command_accepts_retrieval_cli_overrides(tmp_path: Path, monkeypatch) -> None:
+    cfg_file = tmp_path / "config.toml"
+    data_dir = tmp_path / "data"
+    cfg_file.write_text(f'[storage]\ndata_dir = "{data_dir}"\n')
+    fake_tools = _FakeRegistry(["local_pdf_search"])
+    monkeypatch.setattr(
+        "co_scientist.tools.registry.ToolRegistry.discover",
+        lambda self: fake_tools,
+    )
+
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "--config",
+                str(cfg_file),
+                "evidence",
+                "Find somatic mutation literature",
+                "--no-parse-goal",
+                "--max-results-per-source",
+                "40",
+                "--ranking-modes",
+                "relevance,recent,impact",
+            ],
+        )
+    finally:
+        structlog.reset_defaults()
+        setup_logging()
+
+    assert result.exit_code == 0, result.output
+    assert "max_results_per_source=40" in result.output
+    assert "ranking_modes=relevance,recent,impact" in result.output
+
+
+def test_evidence_command_accepts_prompt_file_retrieval_settings(tmp_path: Path, monkeypatch) -> None:
+    cfg_file = tmp_path / "config.toml"
+    data_dir = tmp_path / "data"
+    cfg_file.write_text(f'[storage]\ndata_dir = "{data_dir}"\n')
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text(
+        "Find somatic mutation literature\n\n"
+        "retrieval_settings:\n"
+        "  max_results_per_source: 35\n"
+        "  ranking_modes: relevance,recent\n"
+    )
+    fake_tools = _FakeRegistry(["local_pdf_search"])
+    monkeypatch.setattr(
+        "co_scientist.tools.registry.ToolRegistry.discover",
+        lambda self: fake_tools,
+    )
+
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "--config",
+                str(cfg_file),
+                "evidence",
+                "--prompt-file",
+                str(prompt_file),
+                "--no-parse-goal",
+            ],
+        )
+    finally:
+        structlog.reset_defaults()
+        setup_logging()
+
+    assert result.exit_code == 0, result.output
+    assert "max_results_per_source=35" in result.output
+    assert "ranking_modes=relevance,recent" in result.output
+
+
+def test_evidence_command_rejects_invalid_ranking_modes(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "config.toml"
+    data_dir = tmp_path / "data"
+    cfg_file.write_text(f'[storage]\ndata_dir = "{data_dir}"\n')
+
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "--config",
+                str(cfg_file),
+                "evidence",
+                "Find somatic mutation literature",
+                "--no-parse-goal",
+                "--ranking-modes",
+                "relevance,novelty",
+            ],
+        )
+    finally:
+        structlog.reset_defaults()
+        setup_logging()
+
+    assert result.exit_code == 2
+    assert "Unsupported ranking_modes: novelty" in result.output
+
+
 class _FakeRegistry:
     def __init__(self, names: list[str]) -> None:
         self.names = names

@@ -33,6 +33,7 @@ _CLINICAL_TERMS = (
     "tolerability", "delivery", "adme", "pharmacokinetic", "pk",
     "diagnostic", "biomarker",
 )
+_SUPPORTED_RANKING_MODES = ("relevance", "recent", "impact")
 
 
 class LocalEvidenceSource(BaseModel):
@@ -115,6 +116,67 @@ class EvidenceBundle(BaseModel):
     summary: str = ""
     artifact_id: str | None = None
     artifact_path: str | None = None
+
+
+def apply_retrieval_overrides(
+    cfg: Config,
+    *,
+    max_results_per_source: int | None = None,
+    ranking_modes: str | None = None,
+) -> None:
+    """Apply validated evidence retrieval overrides to config in-place."""
+    if max_results_per_source is not None:
+        limit = _validate_max_results_per_source(max_results_per_source)
+        cfg.evidence_retrieval.default_limit = limit
+        cfg.evidence_retrieval.local_limit = min(limit, 20)
+        cfg.evidence_retrieval.paperclip_limit = min(limit, 1000)
+        capped_external_limit = min(limit, 50)
+        cfg.evidence_retrieval.openalex_limit = capped_external_limit
+        cfg.evidence_retrieval.pubmed_limit = capped_external_limit
+        cfg.evidence_retrieval.europe_pmc_limit = capped_external_limit
+        cfg.evidence_retrieval.arxiv_limit = capped_external_limit
+        cfg.evidence_retrieval.preprint_limit = capped_external_limit
+        cfg.evidence_retrieval.clinical_trials_limit = capped_external_limit
+    if ranking_modes is not None:
+        cfg.evidence_retrieval.ranking_modes = _parse_ranking_modes(ranking_modes)
+
+
+def apply_retrieval_settings_from_text(cfg: Config, text: str) -> None:
+    """Parse a simple retrieval_settings block from prompt text and apply it."""
+    settings: dict[str, str] = {}
+    in_block = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not in_block:
+            if stripped == "retrieval_settings:":
+                in_block = True
+            continue
+        if not stripped:
+            break
+        if ":" not in stripped:
+            break
+        key, value = stripped.split(":", 1)
+        key = key.strip()
+        if key not in {"max_results_per_source", "ranking_modes"}:
+            continue
+        settings[key] = value.strip()
+
+    if not settings:
+        return
+    max_results = None
+    if "max_results_per_source" in settings:
+        raw_limit = settings["max_results_per_source"]
+        try:
+            max_results = int(raw_limit)
+        except ValueError as exc:
+            raise ValueError(
+                "retrieval_settings.max_results_per_source must be an integer from 1 to 1000."
+            ) from exc
+    apply_retrieval_overrides(
+        cfg,
+        max_results_per_source=max_results,
+        ranking_modes=settings.get("ranking_modes"),
+    )
 
 
 async def build_evidence_bundle(
@@ -620,6 +682,22 @@ def _unique_lanes(lanes: list[str]) -> list[str]:
         if lane not in out:
             out.append(lane)
     return out or ["relevance"]
+
+
+def _validate_max_results_per_source(value: int) -> int:
+    if isinstance(value, bool) or value < 1 or value > 1000:
+        raise ValueError("max_results_per_source must be an integer from 1 to 1000.")
+    return value
+
+
+def _parse_ranking_modes(value: str) -> list[str]:
+    modes = _unique_lanes([part.strip() for part in value.split(",") if part.strip()])
+    invalid = [mode for mode in modes if mode not in _SUPPORTED_RANKING_MODES]
+    if invalid:
+        allowed = ",".join(_SUPPORTED_RANKING_MODES)
+        bad = ",".join(invalid)
+        raise ValueError(f"Unsupported ranking_modes: {bad}. Supported modes: {allowed}.")
+    return modes
 
 
 def _limit_for_source(cfg: Config, source: str) -> int:
