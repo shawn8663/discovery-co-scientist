@@ -28,6 +28,7 @@ class EuropePMCSearchTool:
             "query": {"type": "string"},
             "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
             "open_access_only": {"type": "boolean", "default": False},
+            "sort": {"type": "string", "default": "relevance"},
         },
         "required": ["query"],
     }
@@ -37,15 +38,19 @@ class EuropePMCSearchTool:
         query = args.get("query", "").strip()
         n = int(args.get("max_results") or 10)
         oa = bool(args.get("open_access_only"))
+        sort = str(args.get("sort") or "relevance")
         if not query:
             return ToolResult(is_error=True, error_message="empty query")
         q = f"({query}) AND OPEN_ACCESS:Y" if oa else query
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
+                params = {"query": q, "format": "json", "pageSize": n, "resultType": "core"}
+                if sort != "relevance":
+                    params["sort"] = sort
                 r = await client.get(
                     EUROPE_PMC_URL,
-                    params={"query": q, "format": "json", "pageSize": n, "resultType": "core"},
+                    params=params,
                 )
                 r.raise_for_status()
                 data = r.json()

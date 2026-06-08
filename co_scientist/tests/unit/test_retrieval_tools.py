@@ -7,6 +7,7 @@ from co_scientist.tools.builtins.clinical_trials import (
     ClinicalTrialsSearchTool,
     _normalize_clinical_trials,
 )
+from co_scientist.tools.builtins.europe_pmc import EuropePMCSearchTool
 from co_scientist.tools.builtins.openalex import OpenAlexSearchTool, _normalize_openalex
 from co_scientist.tools.cache import RetrievalCache
 from co_scientist.tools.registry import ToolRegistry
@@ -109,9 +110,10 @@ def test_clinical_trials_normalizes_study_records() -> None:
 
 
 async def test_openalex_uses_retrieval_cache_when_available(tmp_cfg, monkeypatch) -> None:
-    args = {"query": "AML drug repurposing", "max_results": 2}
+    args = {"query": "AML drug repurposing", "max_results": 2, "sort": "cited_by_count"}
     cached = {
         "query": args["query"],
+        "sort": args["sort"],
         "n": 1,
         "results": [{"title": "Cached work", "url": "https://example.org"}],
     }
@@ -135,6 +137,80 @@ async def test_openalex_uses_retrieval_cache_when_available(tmp_cfg, monkeypatch
     assert result.content == cached
     assert result.metadata["cache_hit"] is True
     assert result.metadata["retrieval_source"] == "openalex_search"
+
+
+async def test_openalex_sort_affects_request_and_cache_key(tmp_cfg, monkeypatch) -> None:
+    captured_params = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"results": []}
+
+    class CaptureClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def get(self, _url, *, params):
+            captured_params.append(params)
+            return Response()
+
+    monkeypatch.setattr("co_scientist.tools.builtins.openalex.httpx.AsyncClient", CaptureClient)
+
+    args = {"query": "AML drug repurposing", "max_results": 2, "sort": "publication_date"}
+    result = await OpenAlexSearchTool().call(args, ToolCtx(cfg=tmp_cfg, session_id="ses_sort"))
+
+    assert result.is_error is False
+    assert captured_params[0]["sort"] == "publication_date:desc"
+    assert result.content["sort"] == "publication_date"
+    assert RetrievalCache(tmp_cfg, "ses_sort").read("openalex_search", args) == result.content
+    assert RetrievalCache(tmp_cfg, "ses_sort").read(
+        "openalex_search",
+        {"query": "AML drug repurposing", "max_results": 2, "sort": "cited_by_count"},
+    ) is None
+
+
+async def test_europe_pmc_recent_sort_affects_request(tmp_cfg, monkeypatch) -> None:
+    captured_params = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"resultList": {"result": []}}
+
+    class CaptureClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def get(self, _url, *, params):
+            captured_params.append(params)
+            return Response()
+
+    monkeypatch.setattr("co_scientist.tools.builtins.europe_pmc.httpx.AsyncClient", CaptureClient)
+
+    result = await EuropePMCSearchTool().call(
+        {"query": "AML drug repurposing", "max_results": 2, "sort": "P_PDATE_D desc"},
+        ToolCtx(cfg=tmp_cfg, session_id="ses_epmc"),
+    )
+
+    assert result.is_error is False
+    assert captured_params[0]["sort"] == "P_PDATE_D desc"
 
 
 async def test_clinical_trials_uses_retrieval_cache_when_available(tmp_cfg, monkeypatch) -> None:

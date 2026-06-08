@@ -99,6 +99,13 @@ async def test_evidence_bundle_prioritizes_project_files_and_plans_sources(tmp_c
     assert "paperclip_search" in enabled_tools
     assert "clinical_trials_search" in enabled_tools
     assert "biorxiv_medrxiv" in {search.source for search in bundle.planned_searches}
+    clinical_searches = [
+        search for search in first_query_searches
+        if search.source == "clinical_trials"
+    ]
+    assert len(clinical_searches) == 1
+    assert clinical_searches[0].args["lane"] == "relevance"
+    assert "sort" not in clinical_searches[0].args
     assert len(bundle.source_accounting) == len(bundle.local_sources) + len(bundle.planned_searches)
     local_entry = bundle.source_accounting[0]
     assert local_entry.source_id == "src_local_001"
@@ -170,7 +177,25 @@ async def test_evidence_bundle_plans_relevance_recent_and_impact_lanes(tmp_cfg) 
     assert ("paperclip", "recent", "date") in lane_keys
     assert ("openalex", "impact", "cited_by_count") in lane_keys
     assert ("openalex", "recent", "publication_date") in lane_keys
+    europe_pmc_lanes = [
+        (search.args.get("lane"), search.args.get("sort"))
+        for search in bundle.planned_searches
+        if (
+            search.source == "europe_pmc"
+            and search.query == "somatic mutation accumulation cancer aging"
+        )
+    ]
+    assert europe_pmc_lanes == [
+        ("relevance", None),
+        ("recent", "P_PDATE_D desc"),
+    ]
     assert ("pubmed", "recent", "pub_date") in lane_keys
+    preprint_searches = [
+        search for search in bundle.planned_searches
+        if search.source == "biorxiv_medrxiv"
+    ]
+    assert len(preprint_searches) == 1
+    assert preprint_searches[0].args["lane"] == "recent"
     assert all(search.args["max_results"] <= 50 for search in bundle.planned_searches)
 
 
@@ -208,7 +233,7 @@ async def test_execute_evidence_searches_updates_source_accounting_and_artifact(
     call_keys = [(name, args.get("lane"), args.get("sort")) for name, args, _ in tools.calls]
     assert ("paperclip_search", "recent", "date") in call_keys
     assert ("openalex_search", "impact", "cited_by_count") in call_keys
-    assert ("europe_pmc_search", "recent", None) in call_keys
+    assert ("europe_pmc_search", "recent", "P_PDATE_D desc") in call_keys
     executed_entries = [
         entry for entry in executed.source_accounting
         if entry.source_id.startswith("src_plan_")

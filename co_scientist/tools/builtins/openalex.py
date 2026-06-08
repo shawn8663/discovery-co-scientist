@@ -28,6 +28,11 @@ class OpenAlexSearchTool:
         "properties": {
             "query": {"type": "string"},
             "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+            "sort": {
+                "type": "string",
+                "enum": ["relevance", "publication_date", "cited_by_count"],
+                "default": "relevance",
+            },
         },
         "required": ["query"],
     }
@@ -36,9 +41,10 @@ class OpenAlexSearchTool:
         t0 = time.monotonic()
         query = args.get("query", "").strip()
         n = int(args.get("max_results") or 10)
+        sort = _normalize_sort(args.get("sort"))
         if not query:
             return ToolResult(is_error=True, error_message="empty query")
-        cache_args = {"query": query, "max_results": n}
+        cache_args = {"query": query, "max_results": n, "sort": sort}
         cached = RetrievalCache(ctx.cfg, ctx.session_id).read(self.name, cache_args)
         if cached is not None:
             return ToolResult(
@@ -49,23 +55,26 @@ class OpenAlexSearchTool:
             )
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
+                params = {
+                    "search": query,
+                    "per-page": n,
+                    "select": (
+                        "id,doi,display_name,publication_year,cited_by_count,"
+                        "authorships,primary_location,abstract_inverted_index"
+                    ),
+                }
+                if sort_param := _openalex_sort_param(sort):
+                    params["sort"] = sort_param
                 response = await client.get(
                     OPENALEX_WORKS_URL,
-                    params={
-                        "search": query,
-                        "per-page": n,
-                        "select": (
-                            "id,doi,display_name,publication_year,cited_by_count,"
-                            "authorships,primary_location,abstract_inverted_index"
-                        ),
-                    },
+                    params=params,
                 )
                 response.raise_for_status()
                 records = _normalize_openalex(response.json(), limit=n)
         except httpx.HTTPError as e:
             return ToolResult(is_error=True, error_message=f"openalex failed: {e}")
 
-        payload = {"query": query, "n": len(records), "results": records}
+        payload = {"query": query, "sort": sort, "n": len(records), "results": records}
         RetrievalCache(ctx.cfg, ctx.session_id).write(self.name, cache_args, payload)
         return ToolResult(
             content=payload,
@@ -73,6 +82,21 @@ class OpenAlexSearchTool:
             result_bytes=len(str(payload)),
             metadata={"retrieval_source": self.name, "cache_hit": False},
         )
+
+
+def _normalize_sort(value: Any) -> str:
+    sort = str(value or "relevance")
+    if sort in {"publication_date", "cited_by_count"}:
+        return sort
+    return "relevance"
+
+
+def _openalex_sort_param(sort: str) -> str | None:
+    if sort == "publication_date":
+        return "publication_date:desc"
+    if sort == "cited_by_count":
+        return "cited_by_count:desc"
+    return None
 
 
 def _normalize_openalex(payload: dict[str, Any], *, limit: int) -> list[dict[str, Any]]:

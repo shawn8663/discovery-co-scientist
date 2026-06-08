@@ -297,7 +297,7 @@ def _planned_searches(
                     enabled_reason=_secret_reason(cfg, "OPENALEX_API_KEY"),
                 ))
                 priority += 1
-            if "europe_pmc_search" in names:
+            if "europe_pmc_search" in names and lane in {"relevance", "recent"}:
                 searches.append(PlannedEvidenceSearch(
                     priority=priority,
                     source="europe_pmc",
@@ -327,16 +327,16 @@ def _planned_searches(
                     reason="Computational, quantitative biology, and methods literature follow-up search.",
                 ))
                 priority += 1
-            if bundle.clinical_or_translational and "clinical_trials_search" in names:
-                searches.append(PlannedEvidenceSearch(
-                    priority=priority,
-                    source="clinical_trials",
-                    tool="clinical_trials_search",
-                    query=query,
-                    args=_lane_args(cfg, "clinical_trials", "clinical_trials_search", query, lane),
-                    reason="Clinical/translational goal: inspect registered human studies.",
-                ))
-                priority += 1
+        if bundle.clinical_or_translational and "clinical_trials_search" in names:
+            searches.append(PlannedEvidenceSearch(
+                priority=priority,
+                source="clinical_trials",
+                tool="clinical_trials_search",
+                query=query,
+                args=_lane_args(cfg, "clinical_trials", "clinical_trials_search", query, "relevance"),
+                reason="Clinical/translational goal: inspect registered human studies.",
+            ))
+            priority += 1
         if "europe_pmc_search" in names:
             preprint_query = f'({query}) AND (SRC:PPR OR JOURNAL:"bioRxiv" OR JOURNAL:"medRxiv")'
             preprint_lane = "recent" if "recent" in lanes else "relevance"
@@ -416,6 +416,8 @@ def _lane_args(cfg: Config, source: str, tool: str, query: str, lane: str) -> di
         args["sort"] = "pub_date" if lane == "recent" else "relevance"
     elif tool == "arxiv_search":
         args["sort"] = "submitted" if lane == "recent" else "relevance"
+    elif tool == "europe_pmc_search" and lane == "recent":
+        args["sort"] = "P_PDATE_D desc"
     return args
 
 
