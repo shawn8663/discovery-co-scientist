@@ -276,6 +276,13 @@ Successful retrieval calls are saved as workspace artifacts of kind
 `retrieved_literature`, including source, query, cache information, and citation
 metadata where available.
 
+For the multi-lane evidence bundle behavior, see
+[Evidence Retrieval](EVIDENCE_RETRIEVAL.md). The `discovery-coscientist
+evidence` command accepts `--max-results-per-source` to control per-source
+retrieval depth and `--ranking-modes` to choose the evidence lanes, such as
+`relevance,recent,impact`. Prompt files can also include a `retrieval_settings`
+block with the same controls.
+
 ## Local PDF and Workspace Behavior
 
 The web UI can upload project files into the per-session workspace:
