@@ -109,6 +109,8 @@ class EvidenceBundle(BaseModel):
     planned_searches: list[PlannedEvidenceSearch] = Field(default_factory=list)
     source_accounting: list[SourceAccountingEntry] = Field(default_factory=list)
     deduplication_keys: dict[str, list[str]] = Field(default_factory=dict)
+    canonical_evidence: list[EvidenceRecord] = Field(default_factory=list)
+    evidence_groups: dict[str, list[str]] = Field(default_factory=dict)
     clinical_or_translational: bool = False
     summary: str = ""
     artifact_id: str | None = None
@@ -170,6 +172,7 @@ async def execute_evidence_searches(
     tools: ToolRegistry,
 ) -> EvidenceBundle:
     """Execute enabled planned searches and persist result accounting."""
+    normalized_records: list[EvidenceRecord] = []
     for entry in bundle.source_accounting:
         if not entry.source_id.startswith("src_plan_"):
             continue
@@ -197,6 +200,19 @@ async def execute_evidence_searches(
             entry.status = "executed"
             entry.result_count = _result_count(result.content)
             entry.error_message = None
+            normalized_records.extend(normalize_retrieval_records(
+                source_id=entry.source_id,
+                source_type=entry.source_type,
+                tool=entry.tool,
+                query=entry.query or "",
+                lane=str(entry.args.get("lane") or "relevance"),
+                content=result.content,
+            ))
+    bundle.canonical_evidence = build_canonical_evidence(cfg, normalized_records)
+    bundle.evidence_groups = _group_index(
+        bundle.canonical_evidence,
+        limit=cfg.evidence_retrieval.group_limit,
+    )
     bundle.summary = _render_summary(bundle)
     _write_bundle(bundle)
     return bundle
@@ -290,6 +306,16 @@ def build_canonical_evidence(cfg: Config, records: list[EvidenceRecord]) -> list
     _score_and_group_records(cfg, canonical)
     canonical.sort(key=lambda item: item.total_score, reverse=True)
     return canonical[:cfg.evidence_retrieval.max_canonical_items]
+
+
+def _group_index(records: list[EvidenceRecord], *, limit: int) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for record in records:
+        for group in record.groups:
+            groups.setdefault(group, [])
+            if len(groups[group]) < limit:
+                groups[group].append(record.canonical_id)
+    return groups
 
 
 def _canonical_key(record: EvidenceRecord) -> str:
@@ -739,6 +765,12 @@ def _render_summary(bundle: EvidenceBundle) -> str:
             f"- Executed source results: {len(executed)} executed, "
             f"{len(failed)} failed, {total_results} total result records"
         )
+    if bundle.canonical_evidence:
+        lines.append(
+            f"- Canonical evidence records after deduplication: {len(bundle.canonical_evidence)}"
+        )
+        for group, ids in sorted(bundle.evidence_groups.items()):
+            lines.append(f"  - {group}: {len(ids)} records")
     ledger_preview = [
         entry for entry in bundle.source_accounting
         if entry.status != "local_cataloged"

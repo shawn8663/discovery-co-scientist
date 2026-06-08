@@ -368,6 +368,25 @@ async def test_execute_evidence_searches_updates_source_accounting_and_artifact(
     assert payload["source_accounting"][1]["result_count"] == 2
 
 
+@pytest.mark.asyncio
+async def test_execute_evidence_searches_persists_canonical_evidence(tmp_cfg) -> None:
+    plan = ResearchPlan(
+        objective="Find somatic mutation accumulation literature",
+        retrieval_queries=["somatic mutation accumulation cancer aging"],
+    )
+    session = _session(plan, workflow="general_hypothesis")
+    tools = _FakeRegistry(["openalex_search", "pubmed_search"])
+
+    bundle = await build_evidence_bundle(tmp_cfg, session, tools)
+    executed = await execute_evidence_searches(tmp_cfg, session.id, bundle, tools)
+
+    assert executed.canonical_evidence
+    assert executed.evidence_groups["highest_relevance"]
+    payload = json.loads(Path(executed.artifact_path).read_text())
+    assert payload["canonical_evidence"]
+    assert payload["evidence_groups"]["highest_relevance"]
+
+
 class _FakeRegistry:
     def __init__(self, names: list[str]) -> None:
         self.names = names
@@ -379,7 +398,19 @@ class _FakeRegistry:
     async def call(self, name, args, ctx):
         self.calls.append((name, args, ctx.session_id))
         return ToolResult(
-            content={"query": args["query"], "n": 2, "results": [{"title": "A"}, {"title": "B"}]},
+            content={
+                "query": args["query"],
+                "n": 2,
+                "results": [
+                    {
+                        "title": "Somatic mutation in aging",
+                        "doi": "10.1234/example",
+                        "year": 2024,
+                        "cited_by_count": 120,
+                    },
+                    {"title": "Genome instability and disease", "year": 2023},
+                ],
+            },
             duration_ms=7,
             result_bytes=128,
             metadata={"retrieval_source": name, "cache_hit": False},
