@@ -266,7 +266,7 @@ def _planned_searches(
     lanes = _unique_lanes(cfg.evidence_retrieval.ranking_modes)
     for query in queries:
         for lane in lanes:
-            if "paperclip_search" in names:
+            if "paperclip_search" in names and lane in {"relevance", "recent"}:
                 searches.append(PlannedEvidenceSearch(
                     priority=priority,
                     source="paperclip",

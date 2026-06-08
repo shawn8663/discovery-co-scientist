@@ -173,8 +173,18 @@ async def test_evidence_bundle_plans_relevance_recent_and_impact_lanes(tmp_cfg) 
         for search in bundle.planned_searches
         if search.query == "somatic mutation accumulation cancer aging"
     ]
-    assert ("paperclip", "relevance", "relevance") in lane_keys
-    assert ("paperclip", "recent", "date") in lane_keys
+    paperclip_lanes = [
+        (search.args.get("lane"), search.args.get("sort"))
+        for search in bundle.planned_searches
+        if (
+            search.source == "paperclip"
+            and search.query == "somatic mutation accumulation cancer aging"
+        )
+    ]
+    assert paperclip_lanes == [
+        ("relevance", "relevance"),
+        ("recent", "date"),
+    ]
     assert ("openalex", "impact", "cited_by_count") in lane_keys
     assert ("openalex", "recent", "publication_date") in lane_keys
     europe_pmc_lanes = [
