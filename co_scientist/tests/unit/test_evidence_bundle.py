@@ -59,6 +59,16 @@ async def test_evidence_bundle_prioritizes_project_files_and_plans_sources(tmp_c
     assert bundle.deduplication_keys["doi"] == ["10.1234/example"]
     assert bundle.deduplication_keys["pmid"] == ["12345678"]
     assert bundle.planned_searches[0].tool == "local_pdf_search"
+    first_query_searches = [
+        search for search in bundle.planned_searches
+        if search.query == "microtubule formation cancer progression"
+    ]
+    assert [search.source for search in first_query_searches[:4]] == [
+        "uploaded_project_files",
+        "paperclip",
+        "openalex",
+        "europe_pmc",
+    ]
     enabled_tools = {search.tool for search in bundle.planned_searches if search.enabled}
     assert {"pubmed_search", "europe_pmc_search", "arxiv_search"}.issubset(enabled_tools)
     assert "openalex_search" in enabled_tools

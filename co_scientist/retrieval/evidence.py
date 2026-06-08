@@ -197,22 +197,62 @@ def _planned_searches(
             ))
             priority += 1
 
-    literature_sources = (
-        ("pubmed", "pubmed_search", "Search peer-reviewed biomedical literature."),
-        ("europe_pmc", "europe_pmc_search", "Search Europe PMC, including PubMed records and life-science preprints."),
-        ("arxiv", "arxiv_search", "Search arXiv for computational, quantitative biology, and methods literature."),
-    )
     for query in queries:
-        for source, tool, reason in literature_sources:
-            if tool not in names:
-                continue
+        if "paperclip_search" in names:
             searches.append(PlannedEvidenceSearch(
                 priority=priority,
-                source=source,
-                tool=tool,
+                source="paperclip",
+                tool="paperclip_search",
                 query=query,
-                args=_default_args(tool, query),
-                reason=reason,
+                args={"query": query, "max_results": min(cfg.paperclip.default_limit, 8)},
+                reason=(
+                    "Primary external literature pass; Paperclip SDK mediates "
+                    "search access and returned literature context."
+                ),
+                enabled=cfg.paperclip.enabled and _has_secret(cfg, "PAPERCLIP_API_KEY"),
+                enabled_reason=_secret_reason(cfg, "PAPERCLIP_API_KEY") if cfg.paperclip.enabled else "paperclip disabled in config",
+            ))
+            priority += 1
+        if "openalex_search" in names:
+            searches.append(PlannedEvidenceSearch(
+                priority=priority,
+                source="openalex",
+                tool="openalex_search",
+                query=query,
+                args={"query": query, "max_results": 8},
+                reason="OpenAlex API scholarly graph search after Paperclip.",
+                enabled=_has_secret(cfg, "OPENALEX_API_KEY"),
+                enabled_reason=_secret_reason(cfg, "OPENALEX_API_KEY"),
+            ))
+            priority += 1
+        if "europe_pmc_search" in names:
+            searches.append(PlannedEvidenceSearch(
+                priority=priority,
+                source="europe_pmc",
+                tool="europe_pmc_search",
+                query=query,
+                args=_default_args("europe_pmc_search", query),
+                reason="Europe PMC biomedical literature search after Paperclip and OpenAlex.",
+            ))
+            priority += 1
+        if "pubmed_search" in names:
+            searches.append(PlannedEvidenceSearch(
+                priority=priority,
+                source="pubmed",
+                tool="pubmed_search",
+                query=query,
+                args=_default_args("pubmed_search", query),
+                reason="Peer-reviewed biomedical literature follow-up search.",
+            ))
+            priority += 1
+        if "arxiv_search" in names:
+            searches.append(PlannedEvidenceSearch(
+                priority=priority,
+                source="arxiv",
+                tool="arxiv_search",
+                query=query,
+                args=_default_args("arxiv_search", query),
+                reason="Computational, quantitative biology, and methods literature follow-up search.",
             ))
             priority += 1
         if "europe_pmc_search" in names:
@@ -223,33 +263,7 @@ def _planned_searches(
                 tool="europe_pmc_search",
                 query=preprint_query,
                 args={"query": preprint_query, "max_results": 5},
-                reason="Explicit life-science preprint pass through Europe PMC.",
-            ))
-            priority += 1
-
-    for query in queries:
-        if "openalex_search" in names:
-            searches.append(PlannedEvidenceSearch(
-                priority=priority,
-                source="openalex",
-                tool="openalex_search",
-                query=query,
-                args={"query": query, "max_results": 8},
-                reason="Broader scholarly graph search; enabled when OpenAlex credentials are configured.",
-                enabled=_has_secret(cfg, "OPENALEX_API_KEY"),
-                enabled_reason=_secret_reason(cfg, "OPENALEX_API_KEY"),
-            ))
-            priority += 1
-        if "paperclip_search" in names:
-            searches.append(PlannedEvidenceSearch(
-                priority=priority,
-                source="paperclip",
-                tool="paperclip_search",
-                query=query,
-                args={"query": query, "max_results": min(cfg.paperclip.default_limit, 8)},
-                reason="Paperclip search/reader path for enabled API-key-backed literature analysis.",
-                enabled=cfg.paperclip.enabled and _has_secret(cfg, "PAPERCLIP_API_KEY"),
-                enabled_reason=_secret_reason(cfg, "PAPERCLIP_API_KEY") if cfg.paperclip.enabled else "paperclip disabled in config",
+                reason="Explicit life-science preprint follow-up pass through Europe PMC.",
             ))
             priority += 1
         if bundle.clinical_or_translational and "clinical_trials_search" in names:
