@@ -154,10 +154,6 @@
 
     <section>
         <h2>Recent events</h2>
-        <p>
-            Summary endpoint:
-            <code>/api/sessions/{{ session.id }}/dashboard-summary</code>
-        </p>
         <ul
             id="events-log"
             data-events-url="{{ dashboard.refresh.sse_path or '/api/sessions/' ~ session.id ~ '/events' }}"
