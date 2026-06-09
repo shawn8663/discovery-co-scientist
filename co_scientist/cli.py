@@ -40,6 +40,29 @@ console = Console()
 log = get_logger("cli")
 
 
+def _dashboard_base_url(cfg) -> str:
+    host = cfg.web_ui.host
+    display_host = "localhost" if host in {"127.0.0.1", "0.0.0.0", "::1"} else host
+    return f"http://{display_host}:{cfg.web_ui.port}"
+
+
+def _dashboard_links(cfg, session_id: str | None = None) -> dict[str, str | None]:
+    base = _dashboard_base_url(cfg)
+    return {
+        "runs": f"{base}/runs",
+        "session": f"{base}/sessions/{session_id}/dashboard" if session_id else None,
+        "serve_command": f"{PRIMARY_CLI} serve",
+    }
+
+
+def _print_dashboard_links(cfg, session_id: str | None = None) -> None:
+    links = _dashboard_links(cfg, session_id)
+    console.print(f"Runs dashboard: {links['runs']}")
+    if links["session"]:
+        console.print(f"This run:       {links['session']}")
+    console.print(f"[dim]Start dashboard server: {links['serve_command']}[/dim]")
+
+
 def _common_setup(config_file: Path | None = None, verbose: bool = False) -> tuple:
     setup_logging("DEBUG" if verbose else "INFO")
     cfg = load_config(config_file)
@@ -276,6 +299,7 @@ def run(
         )
     if science_skills_path is not None:
         console.print(f"[dim]Using science skills from {science_skills_path}[/dim]")
+    _print_dashboard_links(cfg)
     from .agents.supervisor import Supervisor
 
     sup = Supervisor(cfg)
@@ -290,6 +314,7 @@ def run(
         )
     )
     console.print(f"[green]Done.[/green] session={session_id}")
+    _print_dashboard_links(cfg, session_id)
     console.print(f"View report:  {PRIMARY_CLI} report {session_id}")
 
 
@@ -445,6 +470,7 @@ def evidence(
 
     session_id, artifact_path, summary, result_counts = asyncio.run(_do())
     console.print(f"[green]Evidence bundle created[/green] session={session_id}")
+    _print_dashboard_links(cfg, session_id)
     console.print(f"Artifact: {artifact_path}")
     console.print(
         "Searches: "
@@ -472,6 +498,7 @@ def resume(
     sup = Supervisor(cfg)
     sid = asyncio.run(sup.run_session("", resume_session_id=session_id))
     console.print(f"[green]Done.[/green] session={sid}")
+    _print_dashboard_links(cfg, sid)
 
 
 @app.command()
