@@ -45,7 +45,10 @@ scientific skills.
 The local researcher app should organize each session as a workspace with:
 
 - `project_file`: user-uploaded papers, notes, and constraints.
-- `retrieved_literature`: PubMed, Europe PMC, arXiv, OpenAlex, and local PDF extracts.
+- `retrieved_literature`: Paperclip, PubMed, Europe PMC, arXiv, OpenAlex,
+  ClinicalTrials.gov, web, and local PDF extracts.
+- `evidence_bundle`: planned searches, source accounting, canonical evidence,
+  evidence groups, deduplication keys, and links to raw retrieval artifacts.
 - `dataset`: uploaded or retrieved tabular/omics/assay data.
 - `analysis`: executable skill outputs, notebooks, figures, and logs.
 - `draft`: manuscript sections, claims tables, reviewer responses, and protocols.

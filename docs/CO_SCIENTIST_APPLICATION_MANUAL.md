@@ -278,10 +278,14 @@ metadata where available.
 
 For the multi-lane evidence bundle behavior, see
 [Evidence Retrieval](EVIDENCE_RETRIEVAL.md). The `discovery-coscientist
-evidence` command accepts `--max-results-per-source` to control per-source
-retrieval depth and `--ranking-modes` to choose the evidence lanes, such as
+evidence` command now runs the full evidence-bundle creation step by default,
+including external searches, raw `retrieved_literature` artifacts, source
+accounting, and a deduplicated `canonical_evidence` index. It accepts
+`--max-results-per-source` to control per-source retrieval depth and
+`--ranking-modes` to choose evidence lanes, such as
 `relevance,recent,impact`. Prompt files can also include a `retrieval_settings`
-block with the same controls.
+block with the same controls, and explicit CLI flags override prompt-file
+settings.
 
 ## Local PDF and Workspace Behavior
 
@@ -305,6 +309,7 @@ Workspace artifact kinds are:
 | --- | --- |
 | `project_file` | Uploaded PDFs, notes, or datasets. |
 | `retrieved_literature` | Search results from PubMed, arXiv, Europe PMC, OpenAlex, ClinicalTrials, Paperclip, web, or local PDF search. |
+| `evidence_bundle` | Planned searches, source accounting, canonical evidence, evidence groups, and links to raw retrieval artifacts. |
 | `dataset` | Data files associated with a session. |
 | `analysis` | Outputs from analysis skills. |
 | `draft` | Drafting skill outputs. |
@@ -515,12 +520,14 @@ source ~/.Codex/.env
 
 before running commands that call provider APIs.
 
-To use Paperclip as an additional high-volume retrieval source, install the
-optional SDK extra and expose the Paperclip key before starting the app:
+To use Paperclip as the first external retrieval source, install the optional
+SDK extra, load the environment, and authenticate the Paperclip CLI/SDK before
+starting the app:
 
 ```bash
 source ~/.Codex/.env
 uv sync --extra dev --extra paperclip
+paperclip login
 ```
 
 Then set:
@@ -533,7 +540,10 @@ enabled = true
 Paperclip search should usually be used first with a focused source filter and
 a modest result limit. `paperclip_map` is best reserved for promising
 hypotheses after initial screening because it runs a deeper reader pass over a
-saved Paperclip result set.
+saved Paperclip result set. The evidence planner currently checks that
+`PAPERCLIP_API_KEY` is non-empty before marking Paperclip enabled in the search
+plan, while the `gxl-paperclip` execution path uses the OAuth credentials from
+`paperclip login`.
 
 ## Complete Configuration Reference
 
@@ -700,11 +710,35 @@ Anthropic models, these are translated to adaptive thinking effort.
 | `provider` | `tavily` | `tavily` or `brave`. |
 | `max_results` | `8` | Default web-search result count. |
 
+### `[evidence_retrieval]`
+
+| Setting | Default | Meaning |
+| --- | ---: | --- |
+| `depth` | `balanced` | Named evidence retrieval depth profile. |
+| `default_limit` | `25` | Fallback per-source result limit. |
+| `local_limit` | `20` | Uploaded project-file search limit. |
+| `paperclip_limit` | `50` | Paperclip search limit. |
+| `openalex_limit` | `25` | OpenAlex search limit. |
+| `pubmed_limit` | `25` | PubMed search limit. |
+| `europe_pmc_limit` | `25` | Europe PMC search limit. |
+| `arxiv_limit` | `15` | arXiv search limit. |
+| `preprint_limit` | `15` | bioRxiv/medRxiv preprint pass limit. |
+| `clinical_trials_limit` | `25` | ClinicalTrials.gov search limit. |
+| `ranking_modes` | `relevance,recent,impact` | Retrieval lanes planned for supported sources. |
+| `retain_raw_results` | `true` | Keep raw search outputs as `retrieved_literature` artifacts. |
+| `deduplicate_canonical_evidence` | `true` | Build the deduplicated `canonical_evidence` index. |
+| `max_canonical_items` | `200` | Maximum canonical records retained in the evidence bundle. |
+| `group_limit` | `25` | Maximum canonical IDs per evidence group. |
+| `relevance_weight` | `0.45` | Canonical ranking relevance weight. |
+| `impact_weight` | `0.25` | Canonical ranking citation/impact weight. |
+| `recency_weight` | `0.20` | Canonical ranking recency weight. |
+| `corroboration_weight` | `0.10` | Canonical ranking multi-source support weight. |
+
 ### `[paperclip]`
 
 | Setting | Default | Meaning |
 | --- | ---: | --- |
-| `enabled` | `false` | Register Paperclip retrieval tools. Requires the optional `paperclip` extra and Paperclip authentication. |
+| `enabled` | `false` | Register Paperclip retrieval tools. Requires the optional `paperclip` extra, `paperclip login`, and a non-empty `PAPERCLIP_API_KEY` for evidence-plan enablement. |
 | `default_limit` | `20` | Default result count for `paperclip_search`. |
 | `lookup_limit` | `25` | Default result count for `paperclip_lookup`. |
 | `default_sources` | `pmc,biorxiv,medrxiv,arxiv,trials,fda` | Default source filter for Paperclip searches. Empty string searches all sources. |
@@ -772,7 +806,7 @@ Additional optional keys:
 | `BRAVE_API_KEY` | Brave web search. |
 | `NCBI_API_KEY` | PubMed/NCBI rate limits. |
 | `OPENALEX_API_KEY` | OpenAlex rate limits. |
-| `PAPERCLIP_API_KEY` | Paperclip SDK/CLI access. |
+| `PAPERCLIP_API_KEY` | Marks Paperclip available for evidence planning; `gxl-paperclip` execution uses `paperclip login` OAuth credentials. |
 
 ### `[web_ui]`
 

@@ -17,6 +17,10 @@ before broadening the executable scientific skill surface.
 - [x] OpenAlex and ClinicalTrials retrieval tools.
 - [x] Retrieval cache foundation.
 - [x] Local PDF indexing and search.
+- [x] Paperclip-first evidence planning and retrieval.
+- [x] Multi-lane evidence retrieval for relevance, recency, and impact.
+- [x] Canonical evidence bundle with deduplication, source accounting, and review groups.
+- [x] Evidence CLI and prompt-file retrieval settings for isolated evidence previews.
 - [x] Responsive workspace artifact preview layout.
 - [x] Clustered duplicate suppression before full Reflection.
 - [x] Proximity reclustering scheduled before Reflection when enough hypotheses exist.
@@ -106,9 +110,11 @@ before broadening the executable scientific skill surface.
   - Add UI tests for upload and artifact registration.
 
 - [x] Add retrieved-literature workspace artifacts.
-  - Save PubMed, Europe PMC, arXiv, OpenAlex, ClinicalTrials, and local-PDF
-    search results as `retrieved_literature` artifacts.
+  - Save PubMed, Europe PMC, arXiv, OpenAlex, ClinicalTrials, Paperclip, web,
+    and local-PDF search results as `retrieved_literature` artifacts.
   - Store source, query, cache key, and citation metadata.
+  - Save `evidence_bundle` artifacts with planned searches, source accounting,
+    canonical evidence, and links to raw retrieval artifacts.
 
 - [x] Add citation graph and claims table artifacts.
   - Extract claim-to-source mappings from reviews and final overviews.

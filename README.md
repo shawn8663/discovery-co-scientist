@@ -81,8 +81,10 @@ Shared infrastructure includes:
 - SQLite session/task state with migrations and idempotent queue inserts.
 - Workspace manifests for project files, retrieved literature, datasets,
   analysis artifacts, citations, drafts, figures, and final outputs.
-- Literature/retrieval tools for PubMed, arXiv, Europe PMC, OpenAlex,
-  ClinicalTrials.gov, local PDFs, Paperclip, and optional web search.
+- Evidence bundles that prioritize uploaded project files, search Paperclip
+  first when configured, broaden through OpenAlex, Europe PMC, PubMed,
+  preprints, and ClinicalTrials.gov, and preserve both raw retrieval artifacts
+  and deduplicated canonical evidence.
 - FAISS/vector-based proximity and duplicate suppression for the general
   hypothesis workflow.
 - Provider-selectable LLM routing across Anthropic, OpenAI, OpenRouter,
@@ -109,6 +111,16 @@ Initialize local storage:
 discovery-coscientist init
 ```
 
+Preview evidence retrieval before a full run:
+
+```bash
+discovery-coscientist evidence \
+  --prompt-file initial_prompt.txt \
+  --project-dir /path/to/background_papers \
+  --max-results-per-source 50 \
+  --ranking-modes relevance,recent,impact
+```
+
 Run the web UI:
 
 ```bash
@@ -127,6 +139,7 @@ duplicate rate, retrieval hits, and ranking agreement.
 ## Documentation
 
 - [docs/CO_SCIENTIST_APPLICATION_MANUAL.md](docs/CO_SCIENTIST_APPLICATION_MANUAL.md)
+- [docs/EVIDENCE_RETRIEVAL.md](docs/EVIDENCE_RETRIEVAL.md)
 - [docs/ROBIN_WORKFLOW.md](docs/ROBIN_WORKFLOW.md)
 - [docs/NEW_REPO_MIGRATION.md](docs/NEW_REPO_MIGRATION.md)
 - [docs/BENCH_RESULTS.md](docs/BENCH_RESULTS.md)

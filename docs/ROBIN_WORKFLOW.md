@@ -50,6 +50,14 @@ evaluations, analysis runs, and experiment insights. Each row points to a JSON
 artifact under `data/artifacts/<session_id>/...`, and analysis outputs are also
 registered in the session workspace manifest.
 
+Therapeutic discovery sessions use the shared evidence-bundle workflow before
+assay and candidate generation. Uploaded project files are searched first,
+Paperclip is the first external source when configured, and the workflow is
+treated as clinical/translational so ClinicalTrials.gov is included. The
+resulting `evidence_bundle` artifact gives Robin agents a traceable
+`canonical_evidence` index plus links back to raw `retrieved_literature`
+artifacts.
+
 ## Human Decisions
 
 Assays and candidates can be pinned or rejected by expert feedback. The web UI
