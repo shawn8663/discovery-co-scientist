@@ -104,6 +104,7 @@ async def test_dashboard_pages_expose_stable_css_hooks(tmp_cfg, conn) -> None:
     )
 
     assert 'class="runs-index"' in runs_response.text
+    assert 'class="runs-table-wrap"' in runs_response.text
     assert 'class="dashboard-shell"' in dashboard_response.text
     assert 'class="dashboard-top"' in dashboard_response.text
     assert 'class="phase-grid"' in dashboard_response.text
