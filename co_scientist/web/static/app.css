@@ -72,37 +72,45 @@ table { font-size: 0.95em; }
 .runs-index table {
     table-layout: fixed;
     width: 100%;
-    min-width: 60rem;
+    min-width: 1180px;
     margin-bottom: 0;
+    font-size: 14px;
 }
-.runs-index th:nth-child(1) { width: 5rem; }
-.runs-index th:nth-child(2) { width: 5rem; }
-.runs-index th:nth-child(3) { width: 7rem; }
-.runs-index th:nth-child(4) { width: 12rem; }
-.runs-index th:nth-child(5) { width: 7rem; }
-.runs-index th:nth-child(6) { width: 7rem; }
-.runs-index th:nth-child(7) { width: 6rem; }
-.runs-index th:nth-child(8) { width: 6rem; }
-.runs-index th:nth-child(9) { width: 5rem; }
+.runs-index th:nth-child(1) { width: 86px; }
+.runs-index th:nth-child(2) { width: 86px; }
+.runs-index th:nth-child(3) { width: 150px; }
+.runs-index th:nth-child(4) { width: 280px; }
+.runs-index th:nth-child(5) { width: 118px; }
+.runs-index th:nth-child(6) { width: 118px; }
+.runs-index th:nth-child(7) { width: 102px; }
+.runs-index th:nth-child(8) { width: 144px; }
+.runs-index th:nth-child(9) { width: 96px; }
 .runs-index td,
 .runs-index th {
+    padding: 0.4rem 0.45rem;
     vertical-align: top;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 .runs-index td code {
     display: inline-block;
     max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
     vertical-align: middle;
 }
 .runs-index .runs-goal {
     color: var(--pico-color);
     white-space: normal;
     overflow-wrap: break-word;
-    text-overflow: clip;
+}
+.runs-index td:nth-child(5),
+.runs-index td:nth-child(6) {
+    white-space: normal;
+}
+.runs-index td:nth-child(7),
+.runs-index td:nth-child(8) {
+    font-variant-numeric: tabular-nums;
+}
+.runs-index td:nth-child(9) {
+    white-space: normal;
 }
 .dashboard-shell h1 code {
     color: #2864c5;

@@ -31,7 +31,7 @@
         <tbody>
         {% for run in runs %}
         <tr>
-            <td data-label="Run"><code>{{ run.short_id }}</code></td>
+            <td data-label="Run"><code title="{{ run.session_id }}">{{ run.short_id }}</code></td>
             <td data-label="Status"><span class="status status-{{ run.status }}">{{ run.status }}</span></td>
             <td data-label="Workflow"><code>{{ run.workflow }}</code></td>
             <td data-label="Goal" class="runs-goal">{{ run.research_goal[:140] }}</td>
@@ -40,7 +40,11 @@
             <td data-label="Budget" style="text-align:right">
                 ${{ "%.2f"|format(run.budget_used_usd) }} / ${{ "%.2f"|format(run.budget_usd) }}
             </td>
-            <td data-label="Updated"><small>{{ run.updated_at.isoformat()[:19] }}</small></td>
+            <td data-label="Updated">
+                <time datetime="{{ run.updated_at.isoformat() }}">
+                    {{ run.updated_at.strftime("%Y-%m-%d %H:%M") }}
+                </time>
+            </td>
             <td data-label="Links">
                 <a href="{{ run.dashboard_path }}">Dashboard</a>
                 {% if run.overview_path %}

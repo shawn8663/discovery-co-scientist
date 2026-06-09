@@ -153,7 +153,7 @@ async def test_runs_index_pins_active_runs_and_uses_full_dashboard_links(tmp_cfg
     assert [row.session_id for row in index.rows] == [running.id, paused.id, done.id]
     assert index.rows[0].dashboard_path == f"/sessions/{running.id}/dashboard"
     assert index.rows[2].overview_path == f"/sessions/{done.id}/overview"
-    assert index.rows[0].short_id.endswith(running.id[-12:])
+    assert index.rows[0].short_id == running.id[-6:]
 
 
 async def test_runs_index_uses_aggregate_queries_without_session_metrics(

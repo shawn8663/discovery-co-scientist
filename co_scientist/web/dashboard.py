@@ -853,8 +853,7 @@ def _state_from_count(count: int) -> str:
 
 
 def _short_id(session_id: str) -> str:
-    suffix = session_id[-12:] if len(session_id) > 12 else session_id
-    return f"...{suffix}" if len(session_id) > 12 else suffix
+    return session_id[-6:] if len(session_id) > 6 else session_id
 
 
 def _dashboard_path(session_id: str) -> str:
