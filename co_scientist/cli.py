@@ -55,12 +55,20 @@ def _dashboard_links(cfg, session_id: str | None = None) -> dict[str, str | None
     }
 
 
-def _print_dashboard_links(cfg, session_id: str | None = None) -> None:
+def _print_dashboard_links(
+    cfg,
+    session_id: str | None = None,
+    *,
+    include_runs: bool = True,
+    include_serve_command: bool = True,
+) -> None:
     links = _dashboard_links(cfg, session_id)
-    console.print(f"Runs dashboard: {links['runs']}")
+    if include_runs:
+        console.print(f"Runs dashboard: {links['runs']}")
     if links["session"]:
         console.print(f"This run:       {links['session']}")
-    console.print(f"[dim]Start dashboard server: {links['serve_command']}[/dim]")
+    if include_serve_command:
+        console.print(f"[dim]Start dashboard server: {links['serve_command']}[/dim]")
 
 
 def _common_setup(config_file: Path | None = None, verbose: bool = False) -> tuple:
@@ -314,7 +322,7 @@ def run(
         )
     )
     console.print(f"[green]Done.[/green] session={session_id}")
-    _print_dashboard_links(cfg, session_id)
+    _print_dashboard_links(cfg, session_id, include_runs=False, include_serve_command=False)
     console.print(f"View report:  {PRIMARY_CLI} report {session_id}")
 
 
