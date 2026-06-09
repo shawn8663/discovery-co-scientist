@@ -41,6 +41,7 @@ from ..storage.repos import sessions as sess_repo
 from ..storage.repos import transcripts as tx_repo
 from ..tools.local_pdf_search import _looks_like_pdf, _read_or_index_pdf
 from ..workspace import ScientistWorkspace
+from .dashboard import runs_index as build_runs_index
 from .sanitize import render_markdown
 
 log = get_logger("web")
@@ -62,10 +63,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
-        rows = await _list_sessions(cfg)
-        return TEMPLATES.TemplateResponse(
-            request, "index.html", {"sessions": rows}
-        )
+        return await runs_page(request)
+
+    @app.get("/runs", response_class=HTMLResponse)
+    async def runs_page(request: Request) -> HTMLResponse:
+        conn = await db_mod.connect(cfg)
+        try:
+            index_model = await build_runs_index(cfg, conn)
+            return TEMPLATES.TemplateResponse(
+                request,
+                "runs.html",
+                {"runs_index": index_model, "runs": index_model.rows},
+            )
+        finally:
+            await conn.close()
 
     @app.get("/sessions/new", response_class=HTMLResponse)
     async def new_session_form(request: Request) -> HTMLResponse:

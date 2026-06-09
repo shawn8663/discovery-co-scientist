@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Runs - Discovery Co-Scientist{% endblock %}
+{% block content %}
+<hgroup>
+    <h1>Runs</h1>
+    <p>Monitor active runs and review past Discovery Co-Scientist results.</p>
+</hgroup>
+
+{% if not runs %}
+<article>
+    <p>No runs yet.</p>
+    <a href="/sessions/new" role="button">Start your first session</a>
+</article>
+{% else %}
+<section class="runs-index">
+    <table>
+        <thead>
+        <tr>
+            <th>Run</th>
+            <th>Status</th>
+            <th>Workflow</th>
+            <th>Goal</th>
+            <th>Health</th>
+            <th>Progress</th>
+            <th style="text-align:right">Budget</th>
+            <th>Updated</th>
+            <th>Links</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for run in runs %}
+        <tr>
+            <td data-label="Run"><code>{{ run.short_id }}</code></td>
+            <td data-label="Status"><span class="status status-{{ run.status }}">{{ run.status }}</span></td>
+            <td data-label="Workflow"><code>{{ run.workflow }}</code></td>
+            <td data-label="Goal" class="runs-goal">{{ run.research_goal[:140] }}</td>
+            <td data-label="Health">{{ run.health_summary }}</td>
+            <td data-label="Progress">{{ run.scientific_summary }}</td>
+            <td data-label="Budget" style="text-align:right">
+                ${{ "%.2f"|format(run.budget_used_usd) }} / ${{ "%.2f"|format(run.budget_usd) }}
+            </td>
+            <td data-label="Updated"><small>{{ run.updated_at.isoformat()[:19] }}</small></td>
+            <td data-label="Links">
+                <a href="{{ run.dashboard_path }}">Dashboard</a>
+                {% if run.overview_path %}
+                    . <a href="{{ run.overview_path }}">Overview</a>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+{% endblock %}
