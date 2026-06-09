@@ -15,10 +15,10 @@
 >
     <hgroup>
         <h1>Run <code>{{ session.id[-12:] }}</code></h1>
-        <p>
+        <p class="dashboard-run-meta">
             <span class="status status-{{ session.status }}" data-dashboard-field="session.status">{{ session.status }}</span>
             - workflow: <code>{{ session.workflow }}</code>
-            - {{ session.research_goal }}
+            - <span class="dashboard-goal" title="{{ session.research_goal }}">{{ session.research_goal }}</span>
         </p>
     </hgroup>
 
