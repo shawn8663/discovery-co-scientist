@@ -22,11 +22,11 @@ Initial review of hypothesis 2:
 {{ review_2 }}
 
 Debate procedure:
-The discussion will unfold in a series of turns, typically ranging from 3 to 5, with a maximum of 10.
+Use no more than two compact turns. Do not write a long simulated transcript.
 
 Turn 1: begin with a concise summary of both hypotheses and their respective initial reviews.
 
-Subsequent turns:
+Turn 2:
 - Pose clarifying questions to address any ambiguities or uncertainties.
 - Critically evaluate each hypothesis in relation to the stated Goal and Criteria. This evaluation should consider aspects such as:
    - Potential for correctness/validity.
@@ -40,4 +40,4 @@ Additional notes:
 {{ notes | default('') }}
 
 Termination and judgment:
-Once the discussion has reached a point of sufficient depth (typically 3-5 turns, up to 10 turns) and all relevant questions and concerns have been thoroughly addressed, provide a conclusive judgment. This judgment should succinctly state the rationale for the selection. Then, indicate the superior hypothesis by writing the phrase "better idea: ", followed by "1" (for hypothesis 1) or "2" (for hypothesis 2).
+After the two compact turns, provide a conclusive judgment. This judgment should succinctly state the rationale for the selection. Then, indicate the superior hypothesis by writing the phrase "better idea: ", followed by "1" (for hypothesis 1) or "2" (for hypothesis 2).

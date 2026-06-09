@@ -410,7 +410,7 @@ class RankingAgent(BaseAgent):
             user_blocks=[CachedBlock(prompt, cache=False)],
             tools=[],
             tool_choice=None,
-            max_output_tokens=2048,
+            max_output_tokens=4096,
         )
         ctx = CallContext(
             session_id=session.id, task_id=None,

@@ -290,6 +290,30 @@ async def test_idle_flow_schedules_ranking_evolution_and_metareview(tmp_cfg, con
 
 
 @pytest.mark.asyncio
+async def test_idle_flow_counts_only_newly_enqueued_tasks(tmp_cfg, conn) -> None:
+    session = await _make_session(conn)
+    for i in range(2):
+        await _insert_hypothesis(
+            conn,
+            session.id,
+            i,
+            state="in_tournament",
+        )
+
+    first_count = await Supervisor(tmp_cfg)._decide_next_steps(conn, session)
+    second_count = await Supervisor(tmp_cfg)._decide_next_steps(conn, session)
+
+    assert first_count == 1
+    assert second_count == 0
+    async with conn.execute(
+        "SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND action='RunTournamentBatch'",
+        (session.id,),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["n"] == 1
+
+
+@pytest.mark.asyncio
 async def test_hypothesis_created_without_new_ids_skips_proximity(tmp_cfg, conn) -> None:
     session = await _make_session(conn)
     for i in range(3):

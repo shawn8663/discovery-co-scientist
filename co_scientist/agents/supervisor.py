@@ -707,7 +707,7 @@ class Supervisor:
             conn, session.id, state="in_tournament"
         )
         if len(in_tournament) >= 2:
-            await task_repo.enqueue(conn, Task(
+            inserted = await task_repo.enqueue(conn, Task(
                 id=ids.task_id(), session_id=session.id,
                 created_at=datetime.now(UTC),
                 agent="ranking", action="RunTournamentBatch",
@@ -715,12 +715,13 @@ class Supervisor:
                 priority=150, status="pending",
                 idempotency_key=f"{session.id}::ranking::idle::{anchor_mc}",
             ))
-            enqueued += 1
+            if inserted:
+                enqueued += 1
 
         # If the leaderboard has matured (>= 20 hypotheses with ≥ 3 matches), evolve.
         mature = sum(1 for h in in_tournament if h.matches_played >= 3)
         if mature >= 20:
-            await task_repo.enqueue(conn, Task(
+            inserted = await task_repo.enqueue(conn, Task(
                 id=ids.task_id(), session_id=session.id,
                 created_at=datetime.now(UTC),
                 agent="evolution", action="EvolveTopHypotheses",
@@ -729,7 +730,8 @@ class Supervisor:
                 priority=140, status="pending",
                 idempotency_key=f"{session.id}::evolution::idle::{anchor_mc}",
             ))
-            enqueued += 1
+            if inserted:
+                enqueued += 1
 
         # Periodic meta-review (every ~5 minutes wall, approximated by match count).
         mc = await tourney_repo.count_matches(conn, session.id)
@@ -741,7 +743,7 @@ class Supervisor:
             row = await cur.fetchone()
         feedback_count = row["n"] if row else 0
         if mc >= (feedback_count + 1) * 50:
-            await task_repo.enqueue(conn, Task(
+            inserted = await task_repo.enqueue(conn, Task(
                 id=ids.task_id(), session_id=session.id,
                 created_at=datetime.now(UTC),
                 agent="metareview", action="GenerateSystemFeedback",
@@ -749,7 +751,8 @@ class Supervisor:
                 priority=180, status="pending",
                 idempotency_key=f"{session.id}::metareview::feedback::{feedback_count + 1}",
             ))
-            enqueued += 1
+            if inserted:
+                enqueued += 1
 
         return enqueued
 

@@ -53,6 +53,24 @@ def test_render_ranking_pairwise() -> None:
     assert "H1 prose" in out
 
 
+def test_render_ranking_debate_stays_within_verdict_budget() -> None:
+    out = prompts.render(
+        "ranking.debate",
+        goal="g",
+        preferences="p",
+        hypothesis_1="H1 prose",
+        hypothesis_1_id="H1",
+        hypothesis_2="H2 prose",
+        hypothesis_2_id="H2",
+        review_1="R1",
+        review_2="R2",
+    )
+
+    assert "Use no more than two compact turns" in out
+    assert "Do not write a long simulated transcript" in out
+    assert "3 to 5" not in out
+
+
 def test_render_unknown_template_raises() -> None:
     with pytest.raises(KeyError):
         prompts.render("nonexistent.template")
