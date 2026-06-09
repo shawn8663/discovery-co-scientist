@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}Run {{ dashboard.session.id[-12:] }} dashboard - Discovery Co-Scientist{% endblock %}
+{% block content %}
+{% set session = dashboard.session %}
+{% set health = dashboard.run_health %}
+{% set budget = dashboard.budget_time %}
+{% set progress = dashboard.scientific_progress %}
+<section
+    class="dashboard-shell"
+    data-session-id="{{ session.id }}"
+    data-refresh-enabled="{% if dashboard.refresh.enabled %}true{% else %}false{% endif %}"
+    data-refresh-interval-ms="{{ dashboard.refresh.interval_ms or '' }}"
+    data-summary-url="/api/sessions/{{ session.id }}/dashboard-summary"
+    data-events-url="{{ dashboard.refresh.sse_path or '/api/sessions/' ~ session.id ~ '/events' }}"
+>
+    <hgroup>
+        <h1>Run <code>{{ session.id[-12:] }}</code></h1>
+        <p>
+            <span class="status status-{{ session.status }}">{{ session.status }}</span>
+            - workflow: <code>{{ session.workflow }}</code>
+            - {{ session.research_goal }}
+        </p>
+    </hgroup>
+
+    <div class="grid">
+        <article>
+            <header><strong>Run health</strong></header>
+            <p>
+                <strong>{{ health.active_tasks }}</strong> active,
+                <strong>{{ health.pending_tasks }}</strong> pending,
+                <strong>{{ health.done_tasks }}</strong> done,
+                <strong>{{ health.dead_tasks }}</strong> failed
+            </p>
+            <p>
+                Attention: <code>{{ health.attention_level }}</code><br>
+                Retries: {{ health.retry_count }}<br>
+                {% if health.latest_event_age_seconds is not none %}
+                Last activity: {{ "%.0f"|format(health.latest_event_age_seconds) }}s ago
+                {% else %}
+                Last activity: none yet
+                {% endif %}
+            </p>
+            {% if health.current_tasks %}
+            <ul>
+                {% for task in health.current_tasks %}
+                <li>
+                    <strong>{{ task.agent }}</strong>
+                    <code>{{ task.action }}</code>
+                    <small>{{ task.status }}{% if task.attempts %}, attempts {{ task.attempts }}{% endif %}</small>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p><em>No active task labels yet.</em></p>
+            {% endif %}
+        </article>
+
+        <article>
+            <header><strong>Budget and time</strong></header>
+            <p>
+                ${{ "%.2f"|format(budget.cost_used_usd) }} /
+                ${{ "%.2f"|format(budget.cost_budget_usd) }}
+            </p>
+            <progress value="{{ budget.cost_used_usd }}" max="{{ budget.cost_budget_usd if budget.cost_budget_usd > 0 else 1 }}"></progress>
+            <p>
+                Tokens: {{ budget.tokens_used }} / {{ budget.token_budget }}<br>
+                Calls: {{ budget.calls }}<br>
+                {% if budget.elapsed_seconds is not none %}
+                Elapsed: {{ "%.0f"|format(budget.elapsed_seconds) }}s
+                {% endif %}
+                {% if budget.wall_remaining_seconds is not none %}
+                <br>Wall remaining: {{ "%.0f"|format(budget.wall_remaining_seconds) }}s
+                {% endif %}
+            </p>
+        </article>
+
+        <article>
+            <header><strong>Scientific progress</strong></header>
+            <p>
+                Evidence sources: {{ progress.evidence_sources }}<br>
+                Hypotheses: {{ progress.hypotheses }}<br>
+                Reviewed: {{ progress.reviewed }}<br>
+                Reviews: {{ progress.reviews }}<br>
+                Tournament matches: {{ progress.tournament_matches }}
+            </p>
+            {% if session.workflow == "therapeutic_discovery" %}
+            <p>
+                Assays: {{ progress.assays }}{% if progress.assay_evaluations %} ({{ progress.assay_evaluations }} evaluations){% endif %}<br>
+                Candidates: {{ progress.candidates }}{% if progress.candidate_evaluations %} ({{ progress.candidate_evaluations }} evaluations){% endif %}<br>
+                Analysis runs: {{ progress.analysis_runs }}
+            </p>
+            {% endif %}
+            {% if progress.final_output_ready %}
+            <p><strong>Final overview ready</strong></p>
+            {% endif %}
+        </article>
+    </div>
+
+    <div class="grid">
+        <button hx-post="/api/sessions/{{ session.id }}/pause" hx-swap="none">Pause</button>
+        <button hx-post="/api/sessions/{{ session.id }}/resume" hx-swap="none" class="secondary">Resume</button>
+        <button hx-post="/api/sessions/{{ session.id }}/abort" hx-swap="none" hx-confirm="Abort this session?" class="contrast">Abort</button>
+        <a href="{{ dashboard.links.session_path }}" role="button" class="secondary">Detail</a>
+        {% if dashboard.links.overview_path %}
+        <a href="{{ dashboard.links.overview_path }}" role="button">Overview</a>
+        {% endif %}
+    </div>
+
+    <section>
+        <h2>Phase panels</h2>
+        <div class="grid">
+            {% for panel in dashboard.phase_panels %}
+            <article id="phase-{{ panel.key }}">
+                <header>
+                    <strong>{{ panel.title }}</strong>
+                    <small><code>{{ panel.state }}</code></small>
+                </header>
+                {% if panel.summary %}
+                <p>{{ panel.summary }}</p>
+                {% endif %}
+                {% if panel.counts %}
+                <dl>
+                    {% for label, value in panel.counts.items() %}
+                    <dt>{{ label.replace("_", " ") }}</dt>
+                    <dd>{{ value }}</dd>
+                    {% endfor %}
+                </dl>
+                {% endif %}
+                {% if panel.items %}
+                <ul>
+                    {% for item in panel.items %}
+                    <li>
+                        <strong>{{ item.title or item.label or item.id or item.kind }}</strong>
+                        {% if item.value is defined and item.value %}<span>{{ item.value }}</span>{% endif %}
+                        {% if item.state is defined and item.state %}<small><code>{{ item.state }}</code></small>{% endif %}
+                        {% if item.rank_score is defined and item.rank_score is not none %}<small>score {{ "%.2f"|format(item.rank_score) }}</small>{% endif %}
+                        {% if item.path is defined and item.path %}<small><code>{{ item.path }}</code></small>{% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                {% if panel.links %}
+                <p>
+                    {% for label, href in panel.links.items() %}
+                    <a href="{{ href }}">{{ label }}</a>{% if not loop.last %} · {% endif %}
+                    {% endfor %}
+                </p>
+                {% endif %}
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section>
+        <h2>Recent events</h2>
+        <p>
+            Summary endpoint:
+            <code>/api/sessions/{{ session.id }}/dashboard-summary</code>
+        </p>
+        <ul
+            id="events-log"
+            data-events-url="{{ dashboard.refresh.sse_path or '/api/sessions/' ~ session.id ~ '/events' }}"
+            style="font-family:monospace;font-size:0.85em;max-height:14rem;overflow:auto"
+        ></ul>
+    </section>
+</section>
+
+{% if dashboard.refresh.enabled and dashboard.refresh.sse_path %}
+<script>
+(function() {
+    const shell = document.querySelector(".dashboard-shell");
+    const log = document.getElementById("events-log");
+    if (!shell || !log || shell.dataset.refreshEnabled !== "true") return;
+    const es = new EventSource("{{ dashboard.refresh.sse_path }}");
+    function push(name, payload) {
+        const li = document.createElement("li");
+        li.textContent = new Date().toISOString().slice(11, 19) + " " + name +
+            " " + (payload ? JSON.stringify(payload).slice(0, 200) : "");
+        log.insertBefore(li, log.firstChild);
+        while (log.children.length > 80) log.removeChild(log.lastChild);
+    }
+    ["session_started","task_started","task_completed","task_failed",
+     "hypothesis_created","review_completed","match_complete",
+     "tournament_match_complete","session_done","human_feedback",
+     "session_paused","session_resumed","session_aborted"].forEach(name => {
+        es.addEventListener(name, e => {
+            try { push(name, JSON.parse(e.data)); }
+            catch { push(name, e.data); }
+        });
+    });
+    es.onerror = () => push("[sse error]", null);
+})();
+</script>
+{% endif %}
+{% endblock %}

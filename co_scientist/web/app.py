@@ -41,7 +41,10 @@ from ..storage.repos import sessions as sess_repo
 from ..storage.repos import transcripts as tx_repo
 from ..tools.local_pdf_search import _looks_like_pdf, _read_or_index_pdf
 from ..workspace import ScientistWorkspace
-from .dashboard import runs_index as build_runs_index
+from .dashboard import (
+    runs_index as build_runs_index,
+    session_dashboard as build_session_dashboard,
+)
 from .sanitize import render_markdown
 
 log = get_logger("web")
@@ -168,13 +171,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             await conn.close()
 
     @app.get("/sessions/{session_id}/dashboard", response_class=HTMLResponse)
-    async def session_dashboard_placeholder(session_id: str) -> RedirectResponse:
+    async def session_dashboard_page(request: Request, session_id: str) -> HTMLResponse:
         conn = await db_mod.connect(cfg)
         try:
-            session = await sess_repo.fetch(conn, session_id)
-            if session is None:
+            try:
+                dashboard = await build_session_dashboard(cfg, conn, session_id)
+            except KeyError as e:
                 raise HTTPException(status_code=404, detail="session not found")
-            return RedirectResponse(url=f"/sessions/{session_id}", status_code=303)
+            return TEMPLATES.TemplateResponse(
+                request,
+                "session_dashboard.html",
+                {"dashboard": dashboard},
+            )
         finally:
             await conn.close()
 

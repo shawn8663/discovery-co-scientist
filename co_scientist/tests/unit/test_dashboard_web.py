@@ -76,19 +76,51 @@ async def test_root_renders_runs_index(tmp_cfg, conn) -> None:
     assert f"/sessions/{session.id}/dashboard" in response.text
 
 
-async def test_dashboard_cta_redirects_to_session_detail(tmp_cfg, conn) -> None:
-    session = await _insert_session(conn, session_id="ses_web_dashboard_cta", status="running")
-    client = TestClient(create_app(tmp_cfg))
+async def test_session_dashboard_renders_command_center(tmp_cfg, conn) -> None:
+    session = await _insert_session(conn, session_id="ses_web_dashboard", status="running")
 
-    runs_response = client.get("/runs")
-    assert runs_response.status_code == 200
-    assert f"/sessions/{session.id}/dashboard" in runs_response.text
+    response = TestClient(create_app(tmp_cfg)).get(f"/sessions/{session.id}/dashboard")
 
-    dashboard_response = client.get(f"/sessions/{session.id}/dashboard")
+    assert response.status_code == 200
+    assert "Run health" in response.text
+    assert "Budget and time" in response.text
+    assert "Scientific progress" in response.text
+    assert "Prompt and plan" in response.text
+    assert "Evidence" in response.text
+    assert "Generation" in response.text
+    assert f"/api/sessions/{session.id}/dashboard-summary" in response.text
+    assert f"/api/sessions/{session.id}/events" in response.text
 
-    assert dashboard_response.status_code == 200
-    assert str(dashboard_response.url).endswith(f"/sessions/{session.id}")
-    assert "Dashboard goal for ses_web_dashboard_cta" in dashboard_response.text
+
+async def test_completed_session_dashboard_does_not_enable_polling(tmp_cfg, conn) -> None:
+    session = await _insert_session(
+        conn,
+        session_id="ses_web_dashboard_done",
+        status="done",
+        final_overview="artifacts/ses_web_dashboard_done/final/overview.md",
+    )
+
+    response = TestClient(create_app(tmp_cfg)).get(f"/sessions/{session.id}/dashboard")
+
+    assert response.status_code == 200
+    assert "Final overview ready" in response.text
+    assert 'data-refresh-enabled="false"' in response.text
+
+
+async def test_therapeutic_session_dashboard_uses_robin_panels(tmp_cfg, conn) -> None:
+    session = await _insert_session(
+        conn,
+        session_id="ses_web_dashboard_robin",
+        status="running",
+        workflow="therapeutic_discovery",
+    )
+
+    response = TestClient(create_app(tmp_cfg)).get(f"/sessions/{session.id}/dashboard")
+
+    assert response.status_code == 200
+    assert "Assays" in response.text
+    assert "Candidates" in response.text
+    assert "Analysis" in response.text
 
 
 async def test_dashboard_placeholder_returns_404_for_missing_session(tmp_cfg) -> None:
