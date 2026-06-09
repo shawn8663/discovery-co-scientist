@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from co_scientist import cli
 from co_scientist.cli import _dashboard_base_url, _dashboard_links, _print_dashboard_links
 from co_scientist.config import Config, WebUICfg
@@ -33,6 +35,15 @@ def test_dashboard_links_include_runs_and_session_url() -> None:
     assert links["runs"] == "http://localhost:7878/runs"
     assert links["session"] == "http://localhost:7878/sessions/ses_cli_dash/dashboard"
     assert links["serve_command"] == "discovery-coscientist serve"
+
+
+def test_dashboard_links_include_config_file_in_serve_command() -> None:
+    cfg = Config(web_ui=WebUICfg(host="127.0.0.1", port=7878))
+    object.__setattr__(cfg, "_cli_config_file", Path("/tmp/custom config.toml"))
+
+    links = _dashboard_links(cfg, "ses_cli_dash")
+
+    assert links["serve_command"] == "discovery-coscientist --config '/tmp/custom config.toml' serve"
 
 
 def test_print_dashboard_links_can_emit_only_session_link(monkeypatch) -> None:

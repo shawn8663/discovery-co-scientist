@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -46,12 +47,19 @@ def _dashboard_base_url(cfg) -> str:
     return f"http://{display_host}:{cfg.web_ui.port}"
 
 
+def _dashboard_serve_command(cfg) -> str:
+    config_file = getattr(cfg, "_cli_config_file", None)
+    if config_file is None:
+        return f"{PRIMARY_CLI} serve"
+    return f"{PRIMARY_CLI} --config {shlex.quote(str(config_file))} serve"
+
+
 def _dashboard_links(cfg, session_id: str | None = None) -> dict[str, str | None]:
     base = _dashboard_base_url(cfg)
     return {
         "runs": f"{base}/runs",
         "session": f"{base}/sessions/{session_id}/dashboard" if session_id else None,
-        "serve_command": f"{PRIMARY_CLI} serve",
+        "serve_command": _dashboard_serve_command(cfg),
     }
 
 
@@ -74,6 +82,7 @@ def _print_dashboard_links(
 def _common_setup(config_file: Path | None = None, verbose: bool = False) -> tuple:
     setup_logging("DEBUG" if verbose else "INFO")
     cfg = load_config(config_file)
+    object.__setattr__(cfg, "_cli_config_file", config_file)
     return cfg, log
 
 
