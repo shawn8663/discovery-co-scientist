@@ -105,6 +105,7 @@ async def test_completed_session_dashboard_does_not_enable_polling(tmp_cfg, conn
     assert response.status_code == 200
     assert "Final overview ready" in response.text
     assert 'data-refresh-enabled="false"' in response.text
+    assert "new EventSource(" not in response.text
 
 
 async def test_therapeutic_session_dashboard_uses_robin_panels(tmp_cfg, conn) -> None:

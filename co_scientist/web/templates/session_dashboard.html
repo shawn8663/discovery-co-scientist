@@ -130,11 +130,12 @@
                 <ul>
                     {% for item in panel.items %}
                     <li>
+                        {% set item_path = item.path if item.path is defined else item.artifact_path if item.artifact_path is defined else none %}
                         <strong>{{ item.title or item.label or item.id or item.kind }}</strong>
                         {% if item.value is defined and item.value %}<span>{{ item.value }}</span>{% endif %}
                         {% if item.state is defined and item.state %}<small><code>{{ item.state }}</code></small>{% endif %}
                         {% if item.rank_score is defined and item.rank_score is not none %}<small>score {{ "%.2f"|format(item.rank_score) }}</small>{% endif %}
-                        {% if item.path is defined and item.path %}<small><code>{{ item.path }}</code></small>{% endif %}
+                        {% if item_path %}<small><code>{{ item_path }}</code></small>{% endif %}
                     </li>
                     {% endfor %}
                 </ul>

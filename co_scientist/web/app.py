@@ -43,6 +43,8 @@ from ..tools.local_pdf_search import _looks_like_pdf, _read_or_index_pdf
 from ..workspace import ScientistWorkspace
 from .dashboard import (
     runs_index as build_runs_index,
+)
+from .dashboard import (
     session_dashboard as build_session_dashboard,
 )
 from .sanitize import render_markdown
@@ -176,8 +178,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         try:
             try:
                 dashboard = await build_session_dashboard(cfg, conn, session_id)
-            except KeyError as e:
-                raise HTTPException(status_code=404, detail="session not found")
+            except KeyError:
+                raise HTTPException(status_code=404, detail="session not found") from None
             return TEMPLATES.TemplateResponse(
                 request,
                 "session_dashboard.html",
