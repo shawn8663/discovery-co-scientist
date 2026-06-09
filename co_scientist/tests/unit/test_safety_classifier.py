@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from co_scientist.config import Config
@@ -66,3 +69,97 @@ async def test_missing_key_can_fail_closed(monkeypatch) -> None:
     r = await SafetyClassifier(cfg).classify("benign goal")
     assert r.categories == ["safety_unavailable"]
     assert r.action(cfg) == "block"
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_uses_configured_classifier_model(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = Config()
+    cfg.llm.provider = "openai"
+    cfg.models.classifier = "gpt-5"
+    cfg.secrets.OPENAI_API_KEY = "sk-openai-fake"
+
+    raw = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    tool_calls=[
+                        SimpleNamespace(
+                            function=SimpleNamespace(
+                                name="record_safety_assessment",
+                                arguments=(
+                                    '{"categories":["dual_use_bio"],'
+                                    '"confidence":0.7,"rationale":"possible misuse"}'
+                                ),
+                            )
+                        )
+                    ]
+                )
+            )
+        ]
+    )
+    create = AsyncMock(return_value=raw)
+    sdk = MagicMock()
+    sdk.chat.completions.create = create
+
+    with patch("openai.AsyncOpenAI", return_value=sdk) as mock_openai:
+        result = await SafetyClassifier(cfg).classify("biosecurity-adjacent goal")
+
+    mock_openai.assert_called_once_with(api_key="sk-openai-fake")
+    create.assert_awaited_once()
+    request = create.await_args.kwargs
+    assert request["model"] == "gpt-5"
+    assert request["tool_choice"]["function"]["name"] == "record_safety_assessment"
+    assert result.categories == ["dual_use_bio"]
+    assert result.action(cfg) == "quarantine"
+
+
+@pytest.mark.asyncio
+async def test_non_anthropic_provider_falls_back_to_primary_model_for_default_classifier(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = Config()
+    cfg.llm.provider = "openai"
+    cfg.models.parse_goal = "gpt-5"
+    cfg.secrets.OPENAI_API_KEY = "sk-openai-fake"
+
+    raw = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    tool_calls=[
+                        SimpleNamespace(
+                            function=SimpleNamespace(
+                                name="record_safety_assessment",
+                                arguments='{"categories":["none"],"confidence":1.0,"rationale":"ok"}',
+                            )
+                        )
+                    ]
+                )
+            )
+        ]
+    )
+    create = AsyncMock(return_value=raw)
+    sdk = MagicMock()
+    sdk.chat.completions.create = create
+
+    with patch("openai.AsyncOpenAI", return_value=sdk):
+        result = await SafetyClassifier(cfg).classify("benign goal")
+
+    assert create.await_args.kwargs["model"] == "gpt-5"
+    assert result.categories == ["none"]
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_missing_key_reports_openai_key(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    cfg = Config()
+    cfg.llm.provider = "openai"
+    cfg.secrets.OPENAI_API_KEY = ""
+    cfg.safety.classifier_fail_open_in_dev = False
+
+    result = await SafetyClassifier(cfg).classify("benign goal")
+
+    assert result.categories == ["safety_unavailable"]
+    assert "OPENAI_API_KEY" in result.rationale
