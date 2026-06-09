@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -20,7 +21,7 @@ from co_scientist.storage.repos import robin as robin_repo
 from co_scientist.storage.repos import sessions as sess_repo
 from co_scientist.storage.repos import tasks as task_repo
 from co_scientist.storage.repos import transcripts as tx_repo
-from co_scientist.web.dashboard import runs_index, session_dashboard
+from co_scientist.web.dashboard import dashboard_to_dict, runs_index, session_dashboard
 
 
 def _now() -> datetime:
@@ -139,13 +140,63 @@ async def test_runs_index_pins_active_runs_and_uses_full_dashboard_links(tmp_cfg
         status="running",
         updated_delta_seconds=0,
     )
+    paused = await _insert_session(
+        conn,
+        session_id="ses_dash_paused",
+        status="paused",
+        updated_delta_seconds=-10,
+    )
 
     index = await runs_index(tmp_cfg, conn)
 
-    assert [row.session_id for row in index.rows] == [running.id, done.id]
+    assert [row.session_id for row in index.rows] == [running.id, paused.id, done.id]
     assert index.rows[0].dashboard_path == f"/sessions/{running.id}/dashboard"
-    assert index.rows[1].overview_path == f"/sessions/{done.id}/overview"
+    assert index.rows[2].overview_path == f"/sessions/{done.id}/overview"
     assert index.rows[0].short_id.endswith(running.id[-12:])
+
+
+async def test_runs_index_uses_aggregate_queries_without_session_metrics(
+    tmp_cfg, conn, monkeypatch
+) -> None:
+    session = await _insert_session(
+        conn,
+        session_id="ses_dash_index_robin",
+        workflow="therapeutic_discovery",
+    )
+    assay = AssayProposal(
+        id="assay_dash_index",
+        session_id=session.id,
+        created_at=_now(),
+        strategy_name="RPE phagocytosis assay",
+        reasoning="Functional disease model.",
+        artifact_path=f"artifacts/{session.id}/robin/assay.json",
+        rank_score=0.82,
+        state="ranked",
+    )
+    candidate = TherapeuticCandidate(
+        id="candidate_dash_index",
+        session_id=session.id,
+        assay_id=assay.id,
+        created_at=_now(),
+        candidate="Example kinase inhibitor",
+        hypothesis="Improves RPE stress response.",
+        reasoning="Mechanistic candidate.",
+        artifact_path=f"artifacts/{session.id}/robin/candidate.json",
+        rank_score=0.71,
+        state="ranked",
+    )
+    await robin_repo.insert_assay(conn, assay)
+    await robin_repo.insert_candidate(conn, candidate)
+
+    async def _fail_metrics(*_args, **_kwargs):
+        raise AssertionError("runs_index should not call per-session metrics")
+
+    monkeypatch.setattr("co_scientist.web.dashboard.session_metrics_cached", _fail_metrics)
+
+    index = await runs_index(tmp_cfg, conn)
+
+    assert index.rows[0].session_id == session.id
+    assert index.rows[0].scientific_summary == "1 assays, 1 candidates"
 
 
 async def test_session_dashboard_marks_completed_sessions_as_static(tmp_cfg, conn) -> None:
@@ -160,6 +211,28 @@ async def test_session_dashboard_marks_completed_sessions_as_static(tmp_cfg, con
 
     assert dashboard.refresh.enabled is False
     assert dashboard.links.overview_path == f"/sessions/{session.id}/overview"
+
+
+async def test_session_dashboard_does_not_create_missing_workspace_manifest(tmp_cfg, conn) -> None:
+    session = await _insert_session(conn, session_id="ses_dash_no_workspace")
+    workspace_root = tmp_cfg.data_dir / "workspaces" / session.id
+
+    dashboard = await session_dashboard(tmp_cfg, conn, session.id)
+
+    assert dashboard.evidence_artifacts == []
+    assert not workspace_root.exists()
+
+
+async def test_dashboard_to_dict_is_json_serializable(tmp_cfg, conn) -> None:
+    session = await _insert_session(conn, session_id="ses_dash_json")
+
+    payload = dashboard_to_dict(await session_dashboard(tmp_cfg, conn, session.id))
+
+    assert payload["session"]["id"] == session.id
+    assert payload["links"]["dashboard_path"] == f"/sessions/{session.id}/dashboard"
+    assert payload["run_health"]["status"] == "running"
+    assert payload["phase_panels"][0]["key"] == "prompt_plan"
+    json.dumps(payload)
 
 
 async def test_therapeutic_session_includes_assay_and_candidate_panels(tmp_cfg, conn) -> None:
@@ -200,3 +273,32 @@ async def test_therapeutic_session_includes_assay_and_candidate_panels(tmp_cfg, 
     assert "candidates" in panel_keys
     assert dashboard.scientific_progress.assays == 1
     assert dashboard.scientific_progress.candidates == 1
+
+
+async def test_phase_panel_task_counts_are_phase_specific(tmp_cfg, conn) -> None:
+    session = await _insert_session(conn, session_id="ses_dash_phase_counts")
+    now = _now()
+    for index, (agent, action) in enumerate(
+        [
+            ("generation", "CreateInitialHypotheses"),
+            ("generation", "GenerateFromFeedback"),
+            ("reflection", "ReviewHypothesis"),
+        ]
+    ):
+        await task_repo.enqueue(conn, Task(
+            id=f"task_phase_{index}",
+            session_id=session.id,
+            created_at=now,
+            finished_at=now,
+            agent=agent,  # type: ignore[arg-type]
+            action=action,  # type: ignore[arg-type]
+            payload={},
+            status="done",
+        ))
+
+    dashboard = await session_dashboard(tmp_cfg, conn, session.id)
+
+    panels = {panel.key: panel for panel in dashboard.phase_panels}
+    assert panels["generation"].counts["done_tasks"] == 2
+    assert panels["review"].counts["done_tasks"] == 1
+    assert panels["evolution"].counts["done_tasks"] == 0

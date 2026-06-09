@@ -19,7 +19,7 @@ from ..storage.repos import sessions as sess_repo
 from ..storage.repos import tasks as task_repo
 from ..workspace import ScientistWorkspace, WorkspaceArtifact
 
-ACTIVE_STATUSES = {"running"}
+ACTIVE_STATUSES = {"running", "paused"}
 STATIC_STATUSES = {"paused", "done", "failed", "aborted"}
 GENERAL_PANEL_KEYS = (
     "prompt_plan",
@@ -153,14 +153,17 @@ async def runs_index(cfg: Config, conn: aiosqlite.Connection) -> RunIndex:
     async with conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC") as cur:
         rows = await cur.fetchall()
     sessions = [_row_to_session(row) for row in rows]
+    session_ids = [session.id for session in sessions]
+    task_counts_by_session = await _task_counts_for_sessions(conn, session_ids)
+    science_counts_by_session = await _science_counts_for_sessions(conn, session_ids)
     sessions.sort(
         key=lambda s: (0 if s.status in ACTIVE_STATUSES else 1, -s.updated_at.timestamp())
     )
 
     index_rows: list[RunIndexRow] = []
     for session in sessions:
-        metrics = metrics_to_dict(await session_metrics_cached(conn, session.id))
-        task_counts = await task_repo.count_by_status(conn, session.id)
+        task_counts = task_counts_by_session.get(session.id, {})
+        science_counts = science_counts_by_session.get(session.id, {})
         dead = task_counts.get("dead", 0)
         active = task_counts.get("in_progress", 0) + task_counts.get("leased", 0)
         pending = task_counts.get("pending", 0)
@@ -177,7 +180,7 @@ async def runs_index(cfg: Config, conn: aiosqlite.Connection) -> RunIndex:
                 budget_usd=session.budget_usd,
                 attention_level=attention,
                 health_summary=f"{active} active, {pending} pending, {dead} failed",
-                scientific_summary=_scientific_summary(session.workflow, metrics),
+                scientific_summary=_index_scientific_summary(session.workflow, science_counts),
                 dashboard_path=_dashboard_path(session.id),
                 overview_path=_overview_path(session),
                 final_overview_available=bool(session.final_overview),
@@ -199,6 +202,7 @@ async def session_dashboard(
     current_tasks = await _current_tasks(conn, session.id)
     retry_count = await _task_attempts(conn, session.id)
     latest_activity_at = await _latest_activity_at(conn, session)
+    phase_task_counts = await _task_phase_counts(conn, session.id)
     evidence_artifacts = _evidence_artifacts(cfg, session.id)
 
     assays = (
@@ -262,9 +266,9 @@ async def session_dashboard(
         phase_panels=_phase_panels(
             session=session,
             metrics=metrics,
-            task_counts=task_counts,
             progress=progress,
             evidence_artifacts=evidence_artifacts,
+            phase_task_counts=phase_task_counts,
             assays=assays,
             candidates=candidates,
         ),
@@ -340,9 +344,9 @@ def _phase_panels(
     *,
     session: Session,
     metrics: dict[str, Any],
-    task_counts: dict[str, int],
     progress: ScientificProgress,
     evidence_artifacts: list[WorkspaceArtifact],
+    phase_task_counts: dict[str, dict[str, int]],
     assays: list[Any],
     candidates: list[Any],
 ) -> list[PhasePanel]:
@@ -352,9 +356,9 @@ def _phase_panels(
             key,
             session=session,
             metrics=metrics,
-            task_counts=task_counts,
             progress=progress,
             evidence_artifacts=evidence_artifacts,
+            phase_task_counts=phase_task_counts,
             assays=assays,
             candidates=candidates,
         )
@@ -367,9 +371,9 @@ def _panel_for_key(
     *,
     session: Session,
     metrics: dict[str, Any],
-    task_counts: dict[str, int],
     progress: ScientificProgress,
     evidence_artifacts: list[WorkspaceArtifact],
+    phase_task_counts: dict[str, dict[str, int]],
     assays: list[Any],
     candidates: list[Any],
 ) -> PhasePanel:
@@ -407,7 +411,7 @@ def _panel_for_key(
         counts = {
             "hypotheses": progress.hypotheses,
             "duplicates": int(metrics["n_duplicate_hypotheses"]),
-            "generated_tasks": task_counts.get("done", 0),
+            "done_tasks": _phase_status_count(phase_task_counts, key, "done"),
         }
         return _panel(
             key,
@@ -419,7 +423,11 @@ def _panel_for_key(
             session,
         )
     if key == "review":
-        counts = {"reviews": progress.reviews, "reviewed": progress.reviewed}
+        counts = {
+            "reviews": progress.reviews,
+            "reviewed": progress.reviewed,
+            "done_tasks": _phase_status_count(phase_task_counts, key, "done"),
+        }
         return _panel(
             key,
             "Review",
@@ -433,6 +441,7 @@ def _panel_for_key(
         counts = {
             "matches": progress.tournament_matches,
             "invalid_matches": int(metrics["n_invalid_matches"]),
+            "done_tasks": _phase_status_count(phase_task_counts, key, "done"),
         }
         return _panel(
             key,
@@ -444,10 +453,14 @@ def _panel_for_key(
             session,
         )
     if key == "evolution":
-        counts = {"evolution_tasks": task_counts.get("done", 0)}
+        counts = {"done_tasks": _phase_status_count(phase_task_counts, key, "done")}
         return _panel(key, "Evolution", "waiting", "Evolution and proximity updates", counts, [], session)
     if key == "assays":
-        counts = {"assays": progress.assays, "evaluations": progress.assay_evaluations}
+        counts = {
+            "assays": progress.assays,
+            "evaluations": progress.assay_evaluations,
+            "done_tasks": _phase_status_count(phase_task_counts, key, "done"),
+        }
         items = [
             {
                 "id": assay.id,
@@ -468,7 +481,11 @@ def _panel_for_key(
             session,
         )
     if key == "candidates":
-        counts = {"candidates": progress.candidates, "evaluations": progress.candidate_evaluations}
+        counts = {
+            "candidates": progress.candidates,
+            "evaluations": progress.candidate_evaluations,
+            "done_tasks": _phase_status_count(phase_task_counts, key, "done"),
+        }
         items = [
             {
                 "id": candidate.id,
@@ -492,6 +509,7 @@ def _panel_for_key(
         counts = {
             "analysis_runs": progress.analysis_runs,
             "experiment_insights": progress.experiment_insights,
+            "done_tasks": _phase_status_count(phase_task_counts, key, "done"),
         }
         return _panel(
             key,
@@ -546,6 +564,80 @@ def _artifact_item(artifact: WorkspaceArtifact) -> dict[str, Any]:
     }
 
 
+async def _task_counts_for_sessions(
+    conn: aiosqlite.Connection, session_ids: list[str]
+) -> dict[str, dict[str, int]]:
+    if not session_ids:
+        return {}
+    async with conn.execute(
+        """SELECT session_id, status, COUNT(*) AS n
+              FROM tasks
+             GROUP BY session_id, status"""
+    ) as cur:
+        rows = await cur.fetchall()
+    session_id_set = set(session_ids)
+    out: dict[str, dict[str, int]] = {}
+    for row in rows:
+        if row["session_id"] in session_id_set:
+            out.setdefault(row["session_id"], {})[row["status"]] = int(row["n"])
+    return out
+
+
+async def _science_counts_for_sessions(
+    conn: aiosqlite.Connection, session_ids: list[str]
+) -> dict[str, dict[str, int]]:
+    if not session_ids:
+        return {}
+    session_id_set = set(session_ids)
+    out: dict[str, dict[str, int]] = {session_id: {} for session_id in session_ids}
+
+    async with conn.execute(
+        """SELECT session_id,
+                   COUNT(*) AS hypotheses,
+                   SUM(CASE WHEN state IN ('reviewed','in_tournament','pinned')
+                            THEN 1 ELSE 0 END) AS reviewed
+              FROM hypotheses
+             GROUP BY session_id"""
+    ) as cur:
+        for row in await cur.fetchall():
+            if row["session_id"] not in session_id_set:
+                continue
+            out[row["session_id"]].update(
+                hypotheses=int(row["hypotheses"] or 0),
+                reviewed=int(row["reviewed"] or 0),
+            )
+
+    async with conn.execute(
+        """SELECT session_id,
+                   SUM(CASE WHEN mode != 'invalid' THEN 1 ELSE 0 END) AS matches
+              FROM tournament_matches
+             GROUP BY session_id"""
+    ) as cur:
+        for row in await cur.fetchall():
+            if row["session_id"] in session_id_set:
+                out[row["session_id"]]["matches"] = int(row["matches"] or 0)
+
+    async with conn.execute(
+        """SELECT session_id, COUNT(*) AS assays
+              FROM assay_proposals
+             GROUP BY session_id"""
+    ) as cur:
+        for row in await cur.fetchall():
+            if row["session_id"] in session_id_set:
+                out[row["session_id"]]["assays"] = int(row["assays"] or 0)
+
+    async with conn.execute(
+        """SELECT session_id, COUNT(*) AS candidates
+              FROM therapeutic_candidates
+             GROUP BY session_id"""
+    ) as cur:
+        for row in await cur.fetchall():
+            if row["session_id"] in session_id_set:
+                out[row["session_id"]]["candidates"] = int(row["candidates"] or 0)
+
+    return out
+
+
 async def _current_tasks(conn: aiosqlite.Connection, session_id: str) -> list[dict[str, Any]]:
     async with conn.execute(
         """SELECT id, agent, action, status, attempts, started_at, last_error
@@ -579,6 +671,27 @@ async def _task_attempts(conn: aiosqlite.Connection, session_id: str) -> int:
     return int(row["attempts"] or 0) if row is not None else 0
 
 
+async def _task_phase_counts(
+    conn: aiosqlite.Connection, session_id: str
+) -> dict[str, dict[str, int]]:
+    async with conn.execute(
+        """SELECT agent, action, status, COUNT(*) AS n
+             FROM tasks
+            WHERE session_id=?
+            GROUP BY agent, action, status""",
+        (session_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    out: dict[str, dict[str, int]] = {}
+    for row in rows:
+        phase = _task_phase(row["agent"], row["action"])
+        if phase is None:
+            continue
+        phase_counts = out.setdefault(phase, {})
+        phase_counts[row["status"]] = phase_counts.get(row["status"], 0) + int(row["n"])
+    return out
+
+
 async def _latest_activity_at(
     conn: aiosqlite.Connection, session: Session
 ) -> datetime | None:
@@ -610,10 +723,14 @@ async def _latest_activity_at(
 
 
 def _evidence_artifacts(cfg: Config, session_id: str) -> list[WorkspaceArtifact]:
+    workspace = ScientistWorkspace(cfg, session_id)
+    if not workspace.manifest_path.is_file():
+        return []
     try:
-        artifacts = ScientistWorkspace(cfg, session_id).list()
+        raw = json.loads(workspace.manifest_path.read_text())
     except (OSError, ValueError, json.JSONDecodeError):
         return []
+    artifacts = [WorkspaceArtifact.model_validate(item) for item in raw]
     evidence_kinds = {"evidence_bundle", "retrieved_literature", "project_file"}
     return [artifact for artifact in artifacts if artifact.kind in evidence_kinds]
 
@@ -663,10 +780,38 @@ def _attention_level(status: str, task_counts: dict[str, int]) -> str:
     return "active" if status in ACTIVE_STATUSES else "neutral"
 
 
-def _scientific_summary(workflow: str, metrics: dict[str, Any]) -> str:
+def _index_scientific_summary(workflow: str, counts: dict[str, int]) -> str:
     if workflow == "therapeutic_discovery":
-        return f"{metrics['retrieval_tool_calls']} retrieval calls"
-    return f"{metrics['n_hypotheses']} hypotheses, {metrics['n_matches']} matches"
+        return f"{counts.get('assays', 0)} assays, {counts.get('candidates', 0)} candidates"
+    return f"{counts.get('hypotheses', 0)} hypotheses, {counts.get('matches', 0)} matches"
+
+
+def _task_phase(agent: str, action: str) -> str | None:
+    if action == "GenerateFinalResearchOverview":
+        return "outputs"
+    if agent == "generation":
+        return "generation"
+    if agent == "reflection":
+        return "review"
+    if agent == "ranking":
+        return "tournament"
+    if agent in {"evolution", "proximity"}:
+        return "evolution"
+    if agent == "assay":
+        return "assays"
+    if agent == "candidate":
+        return "candidates"
+    if agent in {"analysis", "result_interpreter"}:
+        return "analysis"
+    if agent == "metareview":
+        return "outputs"
+    return None
+
+
+def _phase_status_count(
+    phase_task_counts: dict[str, dict[str, int]], phase: str, status: str
+) -> int:
+    return phase_task_counts.get(phase, {}).get(status, 0)
 
 
 def _task_statuses(task_counts: dict[str, int]) -> list[str]:
