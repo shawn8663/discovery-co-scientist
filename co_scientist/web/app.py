@@ -167,6 +167,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         finally:
             await conn.close()
 
+    @app.get("/sessions/{session_id}/dashboard", response_class=HTMLResponse)
+    async def session_dashboard_placeholder(session_id: str) -> RedirectResponse:
+        conn = await db_mod.connect(cfg)
+        try:
+            session = await sess_repo.fetch(conn, session_id)
+            if session is None:
+                raise HTTPException(status_code=404, detail="session not found")
+            return RedirectResponse(url=f"/sessions/{session_id}", status_code=303)
+        finally:
+            await conn.close()
+
     @app.get("/sessions/{session_id}/hypotheses/{hid}", response_class=HTMLResponse)
     async def hypothesis_detail(request: Request, session_id: str, hid: str) -> HTMLResponse:
         conn = await db_mod.connect(cfg)

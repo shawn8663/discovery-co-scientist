@@ -60,6 +60,10 @@ async def test_runs_index_lists_active_and_past_runs(tmp_cfg, conn) -> None:
     assert f"/sessions/{active.id}/dashboard" in response.text
     assert f"/sessions/{done.id}/overview" in response.text
     assert "Dashboard goal for ses_web_runs_active" in response.text
+    assert "general_hypothesis" in response.text
+    assert "0 active, 0 pending, 0 failed" in response.text
+    assert "0 hypotheses, 0 matches" in response.text
+    assert "$0.50 / $5.00" in response.text
 
 
 async def test_root_renders_runs_index(tmp_cfg, conn) -> None:
@@ -70,3 +74,24 @@ async def test_root_renders_runs_index(tmp_cfg, conn) -> None:
     assert response.status_code == 200
     assert "Runs" in response.text
     assert f"/sessions/{session.id}/dashboard" in response.text
+
+
+async def test_dashboard_cta_redirects_to_session_detail(tmp_cfg, conn) -> None:
+    session = await _insert_session(conn, session_id="ses_web_dashboard_cta", status="running")
+    client = TestClient(create_app(tmp_cfg))
+
+    runs_response = client.get("/runs")
+    assert runs_response.status_code == 200
+    assert f"/sessions/{session.id}/dashboard" in runs_response.text
+
+    dashboard_response = client.get(f"/sessions/{session.id}/dashboard")
+
+    assert dashboard_response.status_code == 200
+    assert str(dashboard_response.url).endswith(f"/sessions/{session.id}")
+    assert "Dashboard goal for ses_web_dashboard_cta" in dashboard_response.text
+
+
+async def test_dashboard_placeholder_returns_404_for_missing_session(tmp_cfg) -> None:
+    response = TestClient(create_app(tmp_cfg)).get("/sessions/ses_missing_dashboard/dashboard")
+
+    assert response.status_code == 404
