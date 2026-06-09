@@ -92,6 +92,21 @@ async def test_session_dashboard_renders_command_center(tmp_cfg, conn) -> None:
     assert f"/api/sessions/{session.id}/events" in response.text
 
 
+async def test_dashboard_pages_expose_stable_css_hooks(tmp_cfg, conn) -> None:
+    session = await _insert_session(conn, session_id="ses_web_dashboard_css", status="running")
+
+    runs_response = TestClient(create_app(tmp_cfg)).get("/runs")
+    dashboard_response = TestClient(create_app(tmp_cfg)).get(
+        f"/sessions/{session.id}/dashboard"
+    )
+
+    assert 'class="runs-index"' in runs_response.text
+    assert 'class="dashboard-shell"' in dashboard_response.text
+    assert 'class="dashboard-top"' in dashboard_response.text
+    assert 'class="phase-grid"' in dashboard_response.text
+    assert 'class="events-log"' in dashboard_response.text
+
+
 async def test_completed_session_dashboard_does_not_enable_polling(tmp_cfg, conn) -> None:
     session = await _insert_session(
         conn,

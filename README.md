@@ -127,6 +127,9 @@ Run the web UI:
 discovery-coscientist serve
 ```
 
+The Runs dashboard at `http://localhost:7878/runs` lists active and past sessions.
+Each row links to a per-session dashboard for live monitoring and historical review.
+
 ## Benchmarks
 
 The original AML/general-hypothesis benchmark remains available through

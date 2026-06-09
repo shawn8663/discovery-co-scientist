@@ -22,7 +22,7 @@
         </p>
     </hgroup>
 
-    <div class="grid">
+    <div class="dashboard-top">
         <article>
             <header><strong>Run health</strong></header>
             <p>
@@ -96,7 +96,7 @@
         </article>
     </div>
 
-    <div class="grid">
+    <div class="dashboard-actions">
         <button hx-post="/api/sessions/{{ session.id }}/pause" hx-swap="none">Pause</button>
         <button hx-post="/api/sessions/{{ session.id }}/resume" hx-swap="none" class="secondary">Resume</button>
         <button hx-post="/api/sessions/{{ session.id }}/abort" hx-swap="none" hx-confirm="Abort this session?" class="contrast">Abort</button>
@@ -108,9 +108,9 @@
 
     <section>
         <h2>Phase panels</h2>
-        <div class="grid">
+        <div class="phase-grid">
             {% for panel in dashboard.phase_panels %}
-            <article id="phase-{{ panel.key }}">
+            <article id="phase-{{ panel.key }}" class="phase-panel">
                 <header>
                     <strong>{{ panel.title }}</strong>
                     <small><code>{{ panel.state }}</code></small>
@@ -156,8 +156,8 @@
         <h2>Recent events</h2>
         <ul
             id="events-log"
+            class="events-log"
             data-events-url="{{ dashboard.refresh.sse_path or '/api/sessions/' ~ session.id ~ '/events' }}"
-            style="font-family:monospace;font-size:0.85em;max-height:14rem;overflow:auto"
         ></ul>
     </section>
 </section>
