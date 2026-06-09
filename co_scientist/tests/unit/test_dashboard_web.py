@@ -128,3 +128,26 @@ async def test_dashboard_placeholder_returns_404_for_missing_session(tmp_cfg) ->
     response = TestClient(create_app(tmp_cfg)).get("/sessions/ses_missing_dashboard/dashboard")
 
     assert response.status_code == 404
+
+
+async def test_dashboard_summary_endpoint_returns_structured_json(tmp_cfg, conn) -> None:
+    session = await _insert_session(conn, session_id="ses_web_dashboard_json", status="running")
+
+    response = TestClient(create_app(tmp_cfg)).get(
+        f"/api/sessions/{session.id}/dashboard-summary"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session"]["id"] == session.id
+    assert payload["run_health"]["status"] == "running"
+    assert payload["links"]["dashboard_path"] == f"/sessions/{session.id}/dashboard"
+    assert isinstance(payload["phase_panels"], list)
+
+
+async def test_dashboard_summary_endpoint_returns_404_for_missing_session(tmp_cfg) -> None:
+    response = TestClient(create_app(tmp_cfg)).get(
+        "/api/sessions/ses_missing_dashboard/dashboard-summary"
+    )
+
+    assert response.status_code == 404

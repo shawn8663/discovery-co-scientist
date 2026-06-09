@@ -42,6 +42,9 @@ from ..storage.repos import transcripts as tx_repo
 from ..tools.local_pdf_search import _looks_like_pdf, _read_or_index_pdf
 from ..workspace import ScientistWorkspace
 from .dashboard import (
+    dashboard_to_dict,
+)
+from .dashboard import (
     runs_index as build_runs_index,
 )
 from .dashboard import (
@@ -285,6 +288,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             if s is None:
                 raise HTTPException(status_code=404)
             return JSONResponse(s.model_dump(mode="json"))
+        finally:
+            await conn.close()
+
+    @app.get("/api/sessions/{session_id}/dashboard-summary")
+    async def api_dashboard_summary(session_id: str) -> JSONResponse:
+        conn = await db_mod.connect(cfg)
+        try:
+            try:
+                dashboard = await build_session_dashboard(cfg, conn, session_id)
+            except KeyError:
+                raise HTTPException(status_code=404, detail="session not found") from None
+            return JSONResponse(dashboard_to_dict(dashboard))
         finally:
             await conn.close()
 
