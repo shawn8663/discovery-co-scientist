@@ -22,6 +22,7 @@ async def _insert_session(
     status: str = "running",
     workflow: str = "general_hypothesis",
     final_overview: str | None = None,
+    config_snapshot: dict | None = None,
 ) -> Session:
     session = Session(
         id=session_id,
@@ -31,7 +32,7 @@ async def _insert_session(
         workflow=workflow,  # type: ignore[arg-type]
         research_goal=f"Dashboard goal for {session_id}",
         research_plan=ResearchPlan(objective=f"Dashboard objective for {session_id}"),
-        config_snapshot={},
+        config_snapshot=config_snapshot or {},
         budget_tokens=1000,
         budget_usd=5.0,
         budget_used_tokens=100,
@@ -90,6 +91,8 @@ async def test_session_dashboard_renders_command_center(tmp_cfg, conn) -> None:
     assert "Generation" in response.text
     assert f"/api/sessions/{session.id}/dashboard-summary" in response.text
     assert f"/api/sessions/{session.id}/events" in response.text
+    assert 'data-dashboard-field="run_health.active_tasks"' in response.text
+    assert "fetch(shell.dataset.summaryUrl" in response.text
 
 
 async def test_dashboard_pages_expose_stable_css_hooks(tmp_cfg, conn) -> None:
@@ -121,6 +124,20 @@ async def test_completed_session_dashboard_does_not_enable_polling(tmp_cfg, conn
     assert "Final overview ready" in response.text
     assert 'data-refresh-enabled="false"' in response.text
     assert "new EventSource(" not in response.text
+
+
+async def test_paused_session_dashboard_keeps_refresh_enabled(tmp_cfg, conn) -> None:
+    session = await _insert_session(
+        conn,
+        session_id="ses_web_dashboard_paused",
+        status="paused",
+    )
+
+    response = TestClient(create_app(tmp_cfg)).get(f"/sessions/{session.id}/dashboard")
+
+    assert response.status_code == 200
+    assert 'data-refresh-enabled="true"' in response.text
+    assert f'new EventSource("/api/sessions/{session.id}/events")' in response.text
 
 
 async def test_therapeutic_session_dashboard_uses_robin_panels(tmp_cfg, conn) -> None:
@@ -158,6 +175,30 @@ async def test_dashboard_summary_endpoint_returns_structured_json(tmp_cfg, conn)
     assert payload["run_health"]["status"] == "running"
     assert payload["links"]["dashboard_path"] == f"/sessions/{session.id}/dashboard"
     assert isinstance(payload["phase_panels"], list)
+
+
+async def test_dashboard_summary_endpoint_redacts_session_config(tmp_cfg, conn) -> None:
+    session = await _insert_session(
+        conn,
+        session_id="ses_web_dashboard_json_redact",
+        status="running",
+        config_snapshot={
+            "provider": "openai",
+            "secrets": {"OPENAI_API_KEY": "sk-test-secret"},
+        },
+    )
+
+    response = TestClient(create_app(tmp_cfg)).get(
+        f"/api/sessions/{session.id}/dashboard-summary"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session"]["id"] == session.id
+    assert "config_snapshot" not in payload["session"]
+    assert "research_plan" not in payload["session"]
+    assert "sk-test-secret" not in response.text
+    assert "secrets" not in response.text
 
 
 async def test_dashboard_summary_endpoint_returns_404_for_missing_session(tmp_cfg) -> None:

@@ -22,6 +22,7 @@ from co_scientist.storage.repos import sessions as sess_repo
 from co_scientist.storage.repos import tasks as task_repo
 from co_scientist.storage.repos import transcripts as tx_repo
 from co_scientist.web.dashboard import dashboard_to_dict, runs_index, session_dashboard
+from co_scientist.workspace import ScientistWorkspace
 
 
 def _now() -> datetime:
@@ -213,6 +214,15 @@ async def test_session_dashboard_marks_completed_sessions_as_static(tmp_cfg, con
     assert dashboard.links.overview_path == f"/sessions/{session.id}/overview"
 
 
+async def test_session_dashboard_keeps_paused_sessions_live(tmp_cfg, conn) -> None:
+    session = await _insert_session(conn, session_id="ses_dash_paused", status="paused")
+
+    dashboard = await session_dashboard(tmp_cfg, conn, session.id)
+
+    assert dashboard.refresh.enabled is True
+    assert dashboard.refresh.sse_path == f"/api/sessions/{session.id}/events"
+
+
 async def test_session_dashboard_does_not_create_missing_workspace_manifest(tmp_cfg, conn) -> None:
     session = await _insert_session(conn, session_id="ses_dash_no_workspace")
     workspace_root = tmp_cfg.data_dir / "workspaces" / session.id
@@ -221,6 +231,27 @@ async def test_session_dashboard_does_not_create_missing_workspace_manifest(tmp_
 
     assert dashboard.evidence_artifacts == []
     assert not workspace_root.exists()
+
+
+async def test_session_dashboard_skips_malformed_workspace_manifest_entries(tmp_cfg, conn) -> None:
+    session = await _insert_session(conn, session_id="ses_dash_manifest_mixed")
+    workspace = ScientistWorkspace(tmp_cfg, session.id)
+    workspace.ensure()
+    workspace.manifest_path.write_text(json.dumps([
+        {"id": "missing_required_fields"},
+        {
+            "id": "art_valid_evidence",
+            "kind": "project_file",
+            "path": str(tmp_cfg.data_dir / "paper.pdf"),
+            "title": "Valid evidence artifact",
+        },
+    ]))
+
+    dashboard = await session_dashboard(tmp_cfg, conn, session.id)
+
+    assert [artifact.id for artifact in dashboard.evidence_artifacts] == [
+        "art_valid_evidence"
+    ]
 
 
 async def test_dashboard_to_dict_is_json_serializable(tmp_cfg, conn) -> None:

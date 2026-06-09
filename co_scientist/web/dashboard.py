@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import aiosqlite
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ..config import Config
 from ..models import ResearchPlan, Session
@@ -20,7 +20,7 @@ from ..storage.repos import tasks as task_repo
 from ..workspace import ScientistWorkspace, WorkspaceArtifact
 
 ACTIVE_STATUSES = {"running", "paused"}
-STATIC_STATUSES = {"paused", "done", "failed", "aborted"}
+STATIC_STATUSES = {"done", "failed", "aborted"}
 GENERAL_PANEL_KEYS = (
     "prompt_plan",
     "evidence",
@@ -285,7 +285,29 @@ async def session_dashboard(
 
 def dashboard_to_dict(dashboard: SessionDashboard) -> dict[str, Any]:
     """Return a JSON-safe dictionary for API responses."""
-    return _json_safe(dashboard)
+    return {
+        "session": _public_session_dict(dashboard.session),
+        "links": _json_safe(dashboard.links),
+        "run_health": _json_safe(dashboard.run_health),
+        "budget_time": _json_safe(dashboard.budget_time),
+        "scientific_progress": _json_safe(dashboard.scientific_progress),
+        "phase_panels": _json_safe(dashboard.phase_panels),
+        "refresh": _json_safe(dashboard.refresh),
+        "metrics": _json_safe(dashboard.metrics),
+        "evidence_artifacts": _json_safe(dashboard.evidence_artifacts),
+    }
+
+
+def _public_session_dict(session: Session) -> dict[str, Any]:
+    return {
+        "id": session.id,
+        "created_at": _json_safe(session.created_at),
+        "updated_at": _json_safe(session.updated_at),
+        "status": session.status,
+        "workflow": session.workflow,
+        "research_goal": session.research_goal,
+        "final_overview_available": bool(session.final_overview),
+    }
 
 
 def _run_health(
@@ -730,7 +752,14 @@ def _evidence_artifacts(cfg: Config, session_id: str) -> list[WorkspaceArtifact]
         raw = json.loads(workspace.manifest_path.read_text())
     except (OSError, ValueError, json.JSONDecodeError):
         return []
-    artifacts = [WorkspaceArtifact.model_validate(item) for item in raw]
+    if not isinstance(raw, list):
+        return []
+    artifacts: list[WorkspaceArtifact] = []
+    for item in raw:
+        try:
+            artifacts.append(WorkspaceArtifact.model_validate(item))
+        except (TypeError, ValueError, ValidationError):
+            continue
     evidence_kinds = {"evidence_bundle", "retrieved_literature", "project_file"}
     return [artifact for artifact in artifacts if artifact.kind in evidence_kinds]
 

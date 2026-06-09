@@ -16,7 +16,7 @@
     <hgroup>
         <h1>Run <code>{{ session.id[-12:] }}</code></h1>
         <p>
-            <span class="status status-{{ session.status }}">{{ session.status }}</span>
+            <span class="status status-{{ session.status }}" data-dashboard-field="session.status">{{ session.status }}</span>
             - workflow: <code>{{ session.workflow }}</code>
             - {{ session.research_goal }}
         </p>
@@ -26,68 +26,82 @@
         <article>
             <header><strong>Run health</strong></header>
             <p>
-                <strong>{{ health.active_tasks }}</strong> active,
-                <strong>{{ health.pending_tasks }}</strong> pending,
-                <strong>{{ health.done_tasks }}</strong> done,
-                <strong>{{ health.dead_tasks }}</strong> failed
+                <strong data-dashboard-field="run_health.active_tasks">{{ health.active_tasks }}</strong> active,
+                <strong data-dashboard-field="run_health.pending_tasks">{{ health.pending_tasks }}</strong> pending,
+                <strong data-dashboard-field="run_health.done_tasks">{{ health.done_tasks }}</strong> done,
+                <strong data-dashboard-field="run_health.dead_tasks">{{ health.dead_tasks }}</strong> failed
             </p>
             <p>
-                Attention: <code>{{ health.attention_level }}</code><br>
-                Retries: {{ health.retry_count }}<br>
-                {% if health.latest_event_age_seconds is not none %}
-                Last activity: {{ "%.0f"|format(health.latest_event_age_seconds) }}s ago
-                {% else %}
-                Last activity: none yet
-                {% endif %}
+                Attention: <code data-dashboard-field="run_health.attention_level">{{ health.attention_level }}</code><br>
+                Retries: <span data-dashboard-field="run_health.retry_count">{{ health.retry_count }}</span><br>
+                Last activity:
+                <span data-dashboard-field="run_health.latest_event_age_seconds">
+                    {% if health.latest_event_age_seconds is not none %}
+                    {{ "%.0f"|format(health.latest_event_age_seconds) }}s ago
+                    {% else %}
+                    none yet
+                    {% endif %}
+                </span>
             </p>
-            {% if health.current_tasks %}
-            <ul>
-                {% for task in health.current_tasks %}
-                <li>
-                    <strong>{{ task.agent }}</strong>
-                    <code>{{ task.action }}</code>
-                    <small>{{ task.status }}{% if task.attempts %}, attempts {{ task.attempts }}{% endif %}</small>
-                </li>
-                {% endfor %}
-            </ul>
-            {% else %}
-            <p><em>No active task labels yet.</em></p>
-            {% endif %}
+            <div data-dashboard-field="run_health.current_tasks">
+                {% if health.current_tasks %}
+                <ul>
+                    {% for task in health.current_tasks %}
+                    <li>
+                        <strong>{{ task.agent }}</strong>
+                        <code>{{ task.action }}</code>
+                        <small>{{ task.status }}{% if task.attempts %}, attempts {{ task.attempts }}{% endif %}</small>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p><em>No active task labels yet.</em></p>
+                {% endif %}
+            </div>
         </article>
 
         <article>
             <header><strong>Budget and time</strong></header>
             <p>
-                ${{ "%.2f"|format(budget.cost_used_usd) }} /
-                ${{ "%.2f"|format(budget.cost_budget_usd) }}
+                <span data-dashboard-field="budget_time.cost_used_usd">${{ "%.2f"|format(budget.cost_used_usd) }}</span> /
+                <span data-dashboard-field="budget_time.cost_budget_usd">${{ "%.2f"|format(budget.cost_budget_usd) }}</span>
             </p>
-            <progress value="{{ budget.cost_used_usd }}" max="{{ budget.cost_budget_usd if budget.cost_budget_usd > 0 else 1 }}"></progress>
+            <progress
+                data-dashboard-field="budget_time.cost_progress"
+                value="{{ budget.cost_used_usd }}"
+                max="{{ budget.cost_budget_usd if budget.cost_budget_usd > 0 else 1 }}"
+            ></progress>
             <p>
-                Tokens: {{ budget.tokens_used }} / {{ budget.token_budget }}<br>
-                Calls: {{ budget.calls }}<br>
-                {% if budget.elapsed_seconds is not none %}
-                Elapsed: {{ "%.0f"|format(budget.elapsed_seconds) }}s
-                {% endif %}
-                {% if budget.wall_remaining_seconds is not none %}
-                <br>Wall remaining: {{ "%.0f"|format(budget.wall_remaining_seconds) }}s
-                {% endif %}
+                Tokens: <span data-dashboard-field="budget_time.tokens_used">{{ budget.tokens_used }}</span> /
+                <span data-dashboard-field="budget_time.token_budget">{{ budget.token_budget }}</span><br>
+                Calls: <span data-dashboard-field="budget_time.calls">{{ budget.calls }}</span><br>
+                Elapsed:
+                <span data-dashboard-field="budget_time.elapsed_seconds">
+                    {% if budget.elapsed_seconds is not none %}{{ "%.0f"|format(budget.elapsed_seconds) }}s{% else %}none yet{% endif %}
+                </span><br>
+                Wall remaining:
+                <span data-dashboard-field="budget_time.wall_remaining_seconds">
+                    {% if budget.wall_remaining_seconds is not none %}{{ "%.0f"|format(budget.wall_remaining_seconds) }}s{% else %}not set{% endif %}
+                </span>
             </p>
         </article>
 
         <article>
             <header><strong>Scientific progress</strong></header>
             <p>
-                Evidence sources: {{ progress.evidence_sources }}<br>
-                Hypotheses: {{ progress.hypotheses }}<br>
-                Reviewed: {{ progress.reviewed }}<br>
-                Reviews: {{ progress.reviews }}<br>
-                Tournament matches: {{ progress.tournament_matches }}
+                Evidence sources: <span data-dashboard-field="scientific_progress.evidence_sources">{{ progress.evidence_sources }}</span><br>
+                Hypotheses: <span data-dashboard-field="scientific_progress.hypotheses">{{ progress.hypotheses }}</span><br>
+                Reviewed: <span data-dashboard-field="scientific_progress.reviewed">{{ progress.reviewed }}</span><br>
+                Reviews: <span data-dashboard-field="scientific_progress.reviews">{{ progress.reviews }}</span><br>
+                Tournament matches: <span data-dashboard-field="scientific_progress.tournament_matches">{{ progress.tournament_matches }}</span>
             </p>
             {% if session.workflow == "therapeutic_discovery" %}
             <p>
-                Assays: {{ progress.assays }}{% if progress.assay_evaluations %} ({{ progress.assay_evaluations }} evaluations){% endif %}<br>
-                Candidates: {{ progress.candidates }}{% if progress.candidate_evaluations %} ({{ progress.candidate_evaluations }} evaluations){% endif %}<br>
-                Analysis runs: {{ progress.analysis_runs }}
+                Assays: <span data-dashboard-field="scientific_progress.assays">{{ progress.assays }}</span>
+                (<span data-dashboard-field="scientific_progress.assay_evaluations">{{ progress.assay_evaluations }}</span> evaluations)<br>
+                Candidates: <span data-dashboard-field="scientific_progress.candidates">{{ progress.candidates }}</span>
+                (<span data-dashboard-field="scientific_progress.candidate_evaluations">{{ progress.candidate_evaluations }}</span> evaluations)<br>
+                Analysis runs: <span data-dashboard-field="scientific_progress.analysis_runs">{{ progress.analysis_runs }}</span>
             </p>
             {% endif %}
             {% if progress.final_output_ready %}
@@ -168,7 +182,10 @@
     const shell = document.querySelector(".dashboard-shell");
     const log = document.getElementById("events-log");
     if (!shell || !log || shell.dataset.refreshEnabled !== "true") return;
-    const es = new EventSource("{{ dashboard.refresh.sse_path }}");
+    let summaryInFlight = false;
+    let refreshTimer = null;
+    let es = null;
+
     function push(name, payload) {
         const li = document.createElement("li");
         li.textContent = new Date().toISOString().slice(11, 19) + " " + name +
@@ -176,6 +193,130 @@
         log.insertBefore(li, log.firstChild);
         while (log.children.length > 80) log.removeChild(log.lastChild);
     }
+
+    function field(name) {
+        return shell.querySelector('[data-dashboard-field="' + name + '"]');
+    }
+
+    function setText(name, value) {
+        const el = field(name);
+        if (el && value !== undefined) el.textContent = value;
+    }
+
+    function formatMoney(value) {
+        return "$" + Number(value || 0).toFixed(2);
+    }
+
+    function formatInteger(value) {
+        return String(Math.round(Number(value || 0)));
+    }
+
+    function formatSeconds(value, emptyLabel) {
+        if (value === null || value === undefined) return emptyLabel;
+        return formatInteger(value) + "s";
+    }
+
+    function renderCurrentTasks(tasks) {
+        const container = field("run_health.current_tasks");
+        if (!container) return;
+        container.textContent = "";
+        if (!tasks || tasks.length === 0) {
+            const p = document.createElement("p");
+            const em = document.createElement("em");
+            em.textContent = "No active task labels yet.";
+            p.appendChild(em);
+            container.appendChild(p);
+            return;
+        }
+        const ul = document.createElement("ul");
+        tasks.forEach(task => {
+            const li = document.createElement("li");
+            const agent = document.createElement("strong");
+            const action = document.createElement("code");
+            const meta = document.createElement("small");
+            agent.textContent = task.agent || "";
+            action.textContent = task.action || "";
+            meta.textContent = (task.status || "") + (task.attempts ? ", attempts " + task.attempts : "");
+            li.appendChild(agent);
+            li.appendChild(document.createTextNode(" "));
+            li.appendChild(action);
+            li.appendChild(document.createTextNode(" "));
+            li.appendChild(meta);
+            ul.appendChild(li);
+        });
+        container.appendChild(ul);
+    }
+
+    function updateSummary(summary) {
+        const session = summary.session || {};
+        const health = summary.run_health || {};
+        const budget = summary.budget_time || {};
+        const progress = summary.scientific_progress || {};
+
+        const statusBadge = field("session.status");
+        if (statusBadge && session.status) {
+            statusBadge.textContent = session.status;
+            statusBadge.className = "status status-" + session.status;
+        }
+
+        setText("run_health.active_tasks", formatInteger(health.active_tasks));
+        setText("run_health.pending_tasks", formatInteger(health.pending_tasks));
+        setText("run_health.done_tasks", formatInteger(health.done_tasks));
+        setText("run_health.dead_tasks", formatInteger(health.dead_tasks));
+        setText("run_health.attention_level", health.attention_level || "neutral");
+        setText("run_health.retry_count", formatInteger(health.retry_count));
+        setText(
+            "run_health.latest_event_age_seconds",
+            health.latest_event_age_seconds === null || health.latest_event_age_seconds === undefined
+                ? "none yet"
+                : formatSeconds(health.latest_event_age_seconds, "none yet") + " ago"
+        );
+        renderCurrentTasks(health.current_tasks);
+
+        setText("budget_time.cost_used_usd", formatMoney(budget.cost_used_usd));
+        setText("budget_time.cost_budget_usd", formatMoney(budget.cost_budget_usd));
+        const costProgress = field("budget_time.cost_progress");
+        if (costProgress) {
+            costProgress.value = Number(budget.cost_used_usd || 0);
+            costProgress.max = Number(budget.cost_budget_usd || 0) > 0 ? Number(budget.cost_budget_usd) : 1;
+        }
+        setText("budget_time.tokens_used", formatInteger(budget.tokens_used));
+        setText("budget_time.token_budget", formatInteger(budget.token_budget));
+        setText("budget_time.calls", formatInteger(budget.calls));
+        setText("budget_time.elapsed_seconds", formatSeconds(budget.elapsed_seconds, "none yet"));
+        setText("budget_time.wall_remaining_seconds", formatSeconds(budget.wall_remaining_seconds, "not set"));
+
+        setText("scientific_progress.evidence_sources", formatInteger(progress.evidence_sources));
+        setText("scientific_progress.hypotheses", formatInteger(progress.hypotheses));
+        setText("scientific_progress.reviewed", formatInteger(progress.reviewed));
+        setText("scientific_progress.reviews", formatInteger(progress.reviews));
+        setText("scientific_progress.tournament_matches", formatInteger(progress.tournament_matches));
+        setText("scientific_progress.assays", formatInteger(progress.assays));
+        setText("scientific_progress.assay_evaluations", formatInteger(progress.assay_evaluations));
+        setText("scientific_progress.candidates", formatInteger(progress.candidates));
+        setText("scientific_progress.candidate_evaluations", formatInteger(progress.candidate_evaluations));
+        setText("scientific_progress.analysis_runs", formatInteger(progress.analysis_runs));
+
+        if (summary.refresh && summary.refresh.enabled === false) {
+            if (refreshTimer) window.clearInterval(refreshTimer);
+            if (es) es.close();
+        }
+    }
+
+    function refreshSummary() {
+        if (!shell.dataset.summaryUrl || summaryInFlight) return;
+        summaryInFlight = true;
+        fetch(shell.dataset.summaryUrl, {headers: {"Accept": "application/json"}})
+            .then(response => {
+                if (!response.ok) throw new Error("summary " + response.status);
+                return response.json();
+            })
+            .then(updateSummary)
+            .catch(error => push("[summary error]", String(error)))
+            .finally(() => { summaryInFlight = false; });
+    }
+
+    es = new EventSource("{{ dashboard.refresh.sse_path }}");
     ["session_started","task_started","task_completed","task_failed",
      "hypothesis_created","review_completed","match_complete",
      "tournament_match_complete","session_done","human_feedback",
@@ -183,9 +324,15 @@
         es.addEventListener(name, e => {
             try { push(name, JSON.parse(e.data)); }
             catch { push(name, e.data); }
+            refreshSummary();
         });
     });
     es.onerror = () => push("[sse error]", null);
+    refreshSummary();
+    refreshTimer = window.setInterval(
+        refreshSummary,
+        Number(shell.dataset.refreshIntervalMs || "3000") || 3000
+    );
 })();
 </script>
 {% endif %}
