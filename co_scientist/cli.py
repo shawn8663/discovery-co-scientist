@@ -36,6 +36,8 @@ app = typer.Typer(
 )
 tools_app = typer.Typer(help="Tool registry inspection and debug invocation.", no_args_is_help=True)
 app.add_typer(tools_app, name="tools")
+runbook_app = typer.Typer(help="Execute approved multi-run workflow documents.", no_args_is_help=True)
+app.add_typer(runbook_app, name="runbook")
 
 console = Console()
 log = get_logger("cli")
@@ -497,6 +499,193 @@ def evidence(
     )
     console.print("[dim]No generation tasks were enqueued.[/dim]")
     console.print(summary)
+
+
+@runbook_app.command("execute")
+def runbook_execute(
+    ctx: typer.Context,
+    runbook_file: Path = typer.Argument(..., help="Approved TOML runbook to execute."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Validate and print planned runs without starting sessions.",
+    ),
+) -> None:
+    """Execute an approved runbook step-by-step."""
+    cfg, _ = ctx.obj
+    from .runbook import load_runbook
+
+    try:
+        runbook = load_runbook(runbook_file)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    console.print(f"Runbook: {runbook.title}")
+    console.print(f"Steps: {len(runbook.steps)}")
+    _print_dashboard_links(cfg)
+    if dry_run:
+        console.print("[yellow]DRY RUN[/yellow] no sessions will be started.")
+    for i, step in enumerate(runbook.steps, start=1):
+        console.print(
+            f"{i}. {step.name} "
+            f"(workflow={step.workflow}, n={step.n}, "
+            f"budget_usd={step.budget_usd or cfg.run.budget_usd}, "
+            f"wall_clock={step.wall_clock or cfg.run.wall_clock_seconds})"
+        )
+        if step.project_files:
+            console.print(f"   project_files={len(step.project_files)}")
+        if step.project_dirs:
+            console.print(f"   project_dirs={len(step.project_dirs)}")
+    if dry_run:
+        return
+
+    if not has_llm_key(cfg):
+        env_var = provider_key_env(cfg)
+        console.print(f"[red]{env_var} is not set (LLM provider = {cfg.llm.provider}). See .env.example.[/red]")
+        raise typer.Exit(1)
+
+    results: list[dict[str, object]] = []
+    for i, step in enumerate(runbook.steps, start=1):
+        console.rule(f"Runbook step {i}: {step.name}")
+        step_cfg = cfg.model_copy(deep=True)
+        object.__setattr__(step_cfg, "_cli_config_file", getattr(cfg, "_cli_config_file", None))
+        if step.budget_usd is not None:
+            step_cfg.run.budget_usd = step.budget_usd
+        if step.concurrency is not None:
+            step_cfg.run.concurrency = step.concurrency
+        if step.science_skills_path is not None:
+            step_cfg.science_skills.path = str(step.science_skills_path)
+        prefs = step.preferences_file.read_text() if step.preferences_file else None
+        from .agents.supervisor import Supervisor
+        from .workspace.ingest import collect_project_files
+
+        project_files = collect_project_files(files=step.project_files, dirs=step.project_dirs)
+        _print_dashboard_links(step_cfg)
+        try:
+            session_id = asyncio.run(
+                Supervisor(step_cfg).run_session(
+                    step.prompt,
+                    preferences_text=prefs,
+                    project_files=project_files,
+                    n_initial=step.n,
+                    wall_clock_seconds=step.wall_clock,
+                    workflow=step.workflow,  # type: ignore[arg-type]
+                )
+            )
+        except Exception as exc:
+            console.print(f"[red]Step failed: {step.name}: {exc}[/red]")
+            results.append({
+                "step": step.name,
+                "status": "failed",
+                "error": str(exc),
+                "session_id": None,
+            })
+            if runbook.stop_on_failed_step:
+                break
+            continue
+
+        stats = asyncio.run(_runbook_session_stats(step_cfg, session_id))
+        result: dict[str, object] = {
+            "step": step.name,
+            "status": "done",
+            "session_id": session_id,
+            "dashboard": _dashboard_links(step_cfg, session_id)["session"],
+            "stats": stats,
+        }
+        results.append(result)
+        console.print(f"[green]Step complete.[/green] session={session_id}")
+        _print_dashboard_links(step_cfg, session_id, include_runs=False, include_serve_command=False)
+
+    summary_path = runbook.summary_file or runbook.path.with_suffix(".summary.md")
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(_render_runbook_summary(runbook.title, results))
+    console.print(f"Runbook summary: {summary_path}")
+
+    if any(result.get("status") == "failed" for result in results):
+        raise typer.Exit(1)
+
+
+async def _runbook_session_stats(cfg, session_id: str) -> dict[str, object]:
+    try:
+        conn = await db_mod.connect(cfg)
+        try:
+            async with conn.execute(
+                "SELECT status, budget_used_usd, budget_usd, final_overview FROM sessions WHERE id=?",
+                (session_id,),
+            ) as cur:
+                session_row = await cur.fetchone()
+            if session_row is None:
+                return {}
+            async with conn.execute(
+                "SELECT status, COUNT(*) AS n FROM tasks WHERE session_id=? GROUP BY status",
+                (session_id,),
+            ) as cur:
+                task_rows = await cur.fetchall()
+            counts: dict[str, int] = {}
+            for table in ("hypotheses", "reviews", "tournament_matches"):
+                async with conn.execute(
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE session_id=?",
+                    (session_id,),
+                ) as cur:
+                    row = await cur.fetchone()
+                counts[table] = int(row["n"]) if row is not None else 0
+            return {
+                "session_status": session_row["status"],
+                "budget_used_usd": float(session_row["budget_used_usd"] or 0.0),
+                "budget_usd": float(session_row["budget_usd"] or 0.0),
+                "final_overview": session_row["final_overview"],
+                "task_counts": {row["status"]: int(row["n"]) for row in task_rows},
+                **counts,
+            }
+        finally:
+            await conn.close()
+    except Exception as exc:
+        return {"stats_error": str(exc)}
+
+
+def _render_runbook_summary(title: str, results: list[dict[str, object]]) -> str:
+    lines = [
+        f"# Runbook Summary: {title}",
+        "",
+        f"Generated at: {datetime.now(UTC).isoformat()}",
+        "",
+    ]
+    for i, result in enumerate(results, start=1):
+        lines.append(f"## {i}. {result.get('step', 'step')}")
+        lines.append("")
+        lines.append(f"- Status: {result.get('status')}")
+        session_id = result.get("session_id")
+        if session_id:
+            lines.append(f"- Session: `{session_id}`")
+        dashboard = result.get("dashboard")
+        if dashboard:
+            lines.append(f"- Dashboard: {dashboard}")
+        error = result.get("error")
+        if error:
+            lines.append(f"- Error: {error}")
+        stats = result.get("stats")
+        if isinstance(stats, dict) and stats:
+            session_status = stats.get("session_status")
+            if session_status:
+                lines.append(f"- Session status: {session_status}")
+            if "budget_used_usd" in stats and "budget_usd" in stats:
+                lines.append(
+                    f"- Budget: ${float(stats['budget_used_usd']):.2f} / "
+                    f"${float(stats['budget_usd']):.2f}"
+                )
+            lines.append(
+                "- Outputs: "
+                f"{stats.get('hypotheses', 0)} hypotheses, "
+                f"{stats.get('reviews', 0)} reviews, "
+                f"{stats.get('tournament_matches', 0)} tournament matches"
+            )
+            task_counts = stats.get("task_counts")
+            if isinstance(task_counts, dict) and task_counts:
+                counts = ", ".join(f"{key}={value}" for key, value in sorted(task_counts.items()))
+                lines.append(f"- Tasks: {counts}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 @app.command()

@@ -387,6 +387,7 @@ Commands:
 | `co-scientist list` | List sessions with status, hypothesis count, top Elo, and budget use. |
 | `co-scientist status <session_id>` | Print detailed JSON status for one session. |
 | `co-scientist run <goal>` | Start a new research session. |
+| `co-scientist runbook execute <workflow.toml>` | Execute an approved multi-run workflow document step by step. |
 | `co-scientist resume <session_id>` | Resume a paused or interrupted session. |
 | `co-scientist pause <session_id>` | Mark a session paused. |
 | `co-scientist abort <session_id>` | Mark a session aborted. |
@@ -423,6 +424,69 @@ uv run co-scientist run "Identify testable hypotheses about microbiome-driven in
   --wall-clock 7200 \
   --concurrency 4
 ```
+
+### `runbook execute`
+
+Runbooks support semi-autonomous execution after a workflow document has been
+reviewed and approved. A runbook is a TOML file with `approved = true`, a
+`[defaults]` table, and one or more `[[steps]]`. Each step is executed
+sequentially through the same Supervisor used by `co-scientist run`, so runbook
+sessions appear in the normal dashboard and produce the same database rows,
+artifacts, transcripts, reports, and metrics.
+
+Runbooks are intentionally bounded. They do not let the application invent new
+commands or prompts during execution; they only run the approved steps in the
+approved file. A step can define a prompt inline or load it from `prompt_file`.
+Defaults can provide `workflow`, `n`, `wall_clock`, `budget_usd`,
+`preferences_file`, `project_file`, `project_dir`, `science_skills_path`, and
+`concurrency`; individual steps may override those values.
+
+Minimal example:
+
+```toml
+title = "Immune surfaceome aptamer workflow"
+approved = true
+stop_on_failed_step = true
+
+[summary]
+output = "runbook-summary.md"
+
+[defaults]
+workflow = "general_hypothesis"
+n = 15
+wall_clock = 7200
+budget_usd = 60
+preferences_file = "preferences.txt"
+project_file = ["background.pdf"]
+
+[[steps]]
+name = "baseline_surfaceome_strategy"
+prompt_file = "prompts/01-baseline.md"
+
+[[steps]]
+name = "reagent_gap_prioritization"
+prompt_file = "prompts/02-reagent-gap.md"
+n = 10
+```
+
+Validate an approved runbook without starting any sessions:
+
+```bash
+uv run co-scientist runbook execute workflow.toml --dry-run
+```
+
+Execute it:
+
+```bash
+source ~/.Codex/.env
+uv run co-scientist runbook execute workflow.toml
+```
+
+The command prints the run index link and per-session dashboard links as steps
+complete. It also writes a Markdown summary containing the session IDs,
+dashboard links, budget use, task counts, hypothesis/review/match counts, and
+any step-level errors. For a standalone copyable template, see
+`docs/RUNBOOKS.md`.
 
 ### `feedback` Options
 
